@@ -1197,7 +1197,8 @@ export function deleteManualArticle(id: number): boolean {
 }
 
 export function createArticlesFromSearchResults(
-  results: Array<{ title: string; url: string; description?: string }>
+  results: Array<{ title: string; url: string; description?: string }>,
+  parentUrl: string
 ): number[] {
   const db = getDb();
   const feedId = getManualLinksFeedId();
@@ -1206,10 +1207,15 @@ export function createArticlesFromSearchResults(
     return [];
   }
 
+  // Generate parent hash (same way as createManualArticle and getSearchResults)
+  const parentUrlHash = createHash("sha256").update(parentUrl).digest("hex").slice(0, 32);
+
   const createdIds: number[] = [];
 
-  for (const result of results) {
-    const guid = `manual-${createHash("sha256").update(result.url).digest("hex").slice(0, 32)}`;
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    // Use parent hash + index for GUID (matches getSearchResults pattern)
+    const guid = `${parentUrlHash}-${i}`;
 
     const insertResult = db
       .prepare(

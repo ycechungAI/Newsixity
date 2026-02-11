@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       try {
         const searchResults = await extractSearchResults(validated.url);
         if (searchResults.length > 0) {
-          const createdIds = createArticlesFromSearchResults(searchResults);
+          const createdIds = createArticlesFromSearchResults(searchResults, validated.url);
           resultArticleIds.push(...createdIds);
         }
       } catch (error) {
