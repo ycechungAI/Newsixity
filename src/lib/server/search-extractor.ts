@@ -62,14 +62,18 @@ function parseSearchResults(html: string): ExtractedSearchResult[] {
         // Skip empty text
         if (!text || text.length < 3) continue;
 
-        // Skip navigation links
+        // Skip navigation links and Google UI elements
         if (
           href.includes("/search") ||
           href.includes("/intl/") ||
           href.includes("/preferences") ||
           href.includes("/maps") ||
+          href.includes("/advanced_search") ||
+          href.includes("/support") ||
+          href.includes("google.com/url?") || // Skip Google redirect wrapper
           href.startsWith("javascript:") ||
-          href.startsWith("#")
+          href.startsWith("#") ||
+          href.includes("youtube.com") && text.length < 10 // Skip short YouTube snippets
         ) {
           continue;
         }
@@ -98,11 +102,16 @@ function parseSearchResults(html: string): ExtractedSearchResult[] {
         // Skip duplicates
         if (seenUrls.has(href)) continue;
 
-        // Skip unwanted text
+        // Skip unwanted text and special sections
         if (
           text.toLowerCase().includes("translated by") ||
           text.toLowerCase().includes("cached") ||
-          text.match(/^[\d›•\-\s]+$/) // Skip breadcrumb numbers/symbols
+          text.toLowerCase().includes("people also ask") ||
+          text.toLowerCase().includes("related searches") ||
+          text.toLowerCase().includes("more results") ||
+          text.toLowerCase().includes("about this result") ||
+          text.match(/^[\d›•\-\s]+$/) || // Skip breadcrumb numbers/symbols
+          text.length < 5 // Skip very short titles (likely UI elements)
         ) {
           continue;
         }
