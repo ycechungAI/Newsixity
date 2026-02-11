@@ -2,6 +2,8 @@ export interface VideoInfo {
   type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'unknown';
   videoId: string;
   embedUrl: string;
+  playlistId?: string;
+  playlistEmbedUrl?: string;
 }
 
 /**
@@ -12,7 +14,25 @@ export function extractVideoInfo(url: string): VideoInfo | null {
   try {
     const urlObj = new URL(url);
 
-    // YouTube
+    // YouTube playlist ID (shared across YouTube URL types)
+    const ytPlaylistId = urlObj.searchParams.get('list') || undefined;
+    const ytPlaylist = ytPlaylistId
+      ? { playlistId: ytPlaylistId, playlistEmbedUrl: `https://www.youtube.com/embed/videoseries?list=${ytPlaylistId}` }
+      : {};
+
+    // YouTube playlist-only URL (/playlist?list=PLxxx)
+    if ((urlObj.hostname === 'youtube.com' || urlObj.hostname === 'www.youtube.com') && urlObj.pathname === '/playlist') {
+      if (ytPlaylistId) {
+        return {
+          type: 'youtube',
+          videoId: '',
+          embedUrl: `https://www.youtube.com/embed/videoseries?list=${ytPlaylistId}`,
+          ...ytPlaylist,
+        };
+      }
+    }
+
+    // YouTube standard video
     if (urlObj.hostname === 'youtube.com' || urlObj.hostname === 'www.youtube.com') {
       const videoId = urlObj.searchParams.get('v');
       if (videoId) {
@@ -20,6 +40,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
           type: 'youtube',
           videoId,
           embedUrl: `https://www.youtube.com/embed/${videoId}`,
+          ...ytPlaylist,
         };
       }
     }
@@ -32,6 +53,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
           type: 'youtube',
           videoId,
           embedUrl: `https://www.youtube.com/embed/${videoId}`,
+          ...ytPlaylist,
         };
       }
     }
