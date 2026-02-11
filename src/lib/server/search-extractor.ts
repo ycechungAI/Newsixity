@@ -7,8 +7,9 @@ export interface ExtractedSearchResult {
 }
 
 /**
- * Extract search results from a search engine URL
- * Attempts to fetch and parse the search results page
+ * Extract search results for a search engine URL.
+ * Uses DuckDuckGo's HTML endpoint as the extraction backend since
+ * Google/Bing render results with JavaScript (unscrapable from server).
  */
 export async function extractSearchResults(url: string): Promise<ExtractedSearchResult[]> {
   const searchInfo = detectSearchEngine(url);
@@ -17,8 +18,10 @@ export async function extractSearchResults(url: string): Promise<ExtractedSearch
   }
 
   try {
-    console.log("[Search Extractor] Fetching:", url);
-    const response = await fetch(url, {
+    // Use DuckDuckGo HTML endpoint — it returns real links in static HTML
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchInfo.query)}`;
+
+    const response = await fetch(ddgUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -27,120 +30,68 @@ export async function extractSearchResults(url: string): Promise<ExtractedSearch
     });
 
     if (!response.ok) {
-      console.error(`[Search Extractor] Failed to fetch search results: ${response.status}`);
       return [];
     }
 
     const html = await response.text();
-    console.log("[Search Extractor] Received", html.length, "bytes");
-    const results = parseSearchResults(html);
-    console.log("[Search Extractor] Parsed", results.length, "results");
-
-    // Return top 10 unique results
-    return results.slice(0, 10);
+    return parseDuckDuckGoResults(html).slice(0, 5);
   } catch (error) {
-    console.error("[Search Extractor] Error extracting search results:", error);
+    console.error("[Search Extractor] Error:", error);
     return [];
   }
 }
 
 /**
- * Parse HTML to extract search results using regex patterns
- * Works for most search engines
+ * Parse DuckDuckGo HTML results page.
+ * DDG uses class="result__a" for result title links and
+ * wraps actual URLs in //duckduckgo.com/l/?uddg=<encoded-url>
  */
-function parseSearchResults(html: string): ExtractedSearchResult[] {
+function parseDuckDuckGoResults(html: string): ExtractedSearchResult[] {
   const results: ExtractedSearchResult[] = [];
   const seenUrls = new Set<string>();
 
-  try {
-    // Extract all href links and their text
-    const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
-    let match;
-    let linkCount = 0;
-    let totalLinksFound = 0;
+  // Match result blocks: <a class="result__a" href="...">title</a>
+  const resultRegex = /<a[^>]+class=["']result__a["'][^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+  let match;
 
-    // Count total links first
-    const testRegex = /<a[^>]+href/gi;
-    const allMatches = html.match(testRegex);
-    totalLinksFound = allMatches ? allMatches.length : 0;
-    console.log("[Parser] Total <a> tags found:", totalLinksFound);
+  while ((match = resultRegex.exec(html)) && results.length < 10) {
+    const rawHref = match[1];
+    const title = match[2]?.trim();
 
-    while ((match = linkRegex.exec(html)) && results.length < 10) {
-      linkCount++;
+    if (!title || title.length < 3) continue;
+
+    // Extract actual URL from DuckDuckGo redirect
+    let actualUrl = rawHref;
+    const uddgMatch = rawHref.match(/uddg=([^&]+)/);
+    if (uddgMatch) {
       try {
-        let href = match[1];
-        let text = match[2]?.trim() || "";
-
-        // Skip empty text
-        if (!text || text.length < 3) {
-          continue;
-        }
-
-        // Extract actual URL from redirect URLs FIRST (Google style)
-        const redirectMatch = href.match(/[?&]url=([^&]+)/);
-        if (redirectMatch) {
-          try {
-            href = decodeURIComponent(redirectMatch[1]);
-          } catch {
-            // Keep original if decoding fails
-          }
-        }
-
-        // Skip navigation links and Google UI elements
-        if (
-          href.includes("/search") ||
-          href.includes("/intl/") ||
-          href.includes("/preferences") ||
-          href.includes("/maps") ||
-          href.includes("/advanced_search") ||
-          href.includes("/support") ||
-          href.startsWith("javascript:") ||
-          href.startsWith("#")
-        ) {
-          continue;
-        }
-
-        // Validate URL
-        if (!href.startsWith("http://") && !href.startsWith("https://")) {
-          continue;
-        }
-
-        try {
-          new URL(href);
-        } catch {
-          continue;
-        }
-
-        // Skip duplicates
-        if (seenUrls.has(href)) continue;
-
-        // Skip unwanted text and special sections
-        if (
-          text.toLowerCase().includes("translated by") ||
-          text.toLowerCase().includes("cached") ||
-          text.toLowerCase().includes("people also ask") ||
-          text.toLowerCase().includes("related searches") ||
-          text.toLowerCase().includes("more results") ||
-          text.toLowerCase().includes("about this result") ||
-          text.match(/^[\d›•\-\s]+$/) // Skip breadcrumb numbers/symbols
-        ) {
-          continue;
-        }
-
-        seenUrls.add(href);
-
-        results.push({
-          title: text,
-          url: href,
-          description: undefined,
-        });
+        actualUrl = decodeURIComponent(uddgMatch[1]);
       } catch {
-        // Skip individual parse errors and continue
         continue;
       }
     }
-  } catch (error) {
-    console.error("Error parsing search results HTML:", error);
+
+    // Must be a real http(s) URL, skip DDG ad redirects
+    if (!actualUrl.startsWith("http://") && !actualUrl.startsWith("https://")) {
+      continue;
+    }
+    if (actualUrl.includes("duckduckgo.com/y.js") || actualUrl.includes("bing.com/aclick")) {
+      continue;
+    }
+
+    // Skip duplicates
+    if (seenUrls.has(actualUrl)) continue;
+    seenUrls.add(actualUrl);
+
+    // Extract description if available (appears in result__snippet)
+    let description: string | undefined;
+    const snippetAfter = html.slice(match.index, match.index + 1000);
+    const snippetMatch = snippetAfter.match(/class=["']result__snippet["'][^>]*>([^<]+)</);
+    if (snippetMatch) {
+      description = snippetMatch[1].trim();
+    }
+
+    results.push({ title, url: actualUrl, description });
   }
 
   return results;

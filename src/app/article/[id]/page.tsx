@@ -64,29 +64,18 @@ export default async function ArticlePage({
   let searchResults = null;
   let searchQuery = null;
 
-  console.log("[Article Page] feedName:", article.feedName, "link:", article.link);
-  console.log("[Article Page] isSearchEngineUrl:", isSearchEngineUrl(article.link));
-
   if (article.feedName === "Manual Links" && isSearchEngineUrl(article.link)) {
     try {
-      console.log("[Article Page] Fetching search results for:", article.link);
       const results = await extractSearchResults(article.link);
-      console.log("[Article Page] Got", results.length, "results");
-
       if (results.length > 0) {
-        // Convert ExtractedSearchResult to match component props
         searchResults = results.map((r) => ({
-          id: 0, // Placeholder since results aren't stored as articles
           title: r.title,
           link: r.url,
         }));
-        // Extract query from URL for display
         const searchInfo = detectSearchEngine(article.link);
         searchQuery = searchInfo?.query || undefined;
-        console.log("[Article Page] Set searchResults:", searchResults.length, "query:", searchQuery);
       }
-    } catch (error) {
-      console.error("[Article Page] Failed to fetch search results:", error);
+    } catch {
       // Don't fail the page, just skip displaying results
     }
   }
