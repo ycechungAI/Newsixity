@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { createManualArticle, deleteManualArticle, createArticlesFromSearchResults } from "@/lib/db/queries";
-import { isSearchEngineUrl } from "@/lib/utils/search";
-import { extractSearchResults } from "@/lib/server/search-extractor";
+import { createManualArticle, deleteManualArticle } from "@/lib/db/queries";
 import { z } from "zod";
 
 const ManualArticleSchema = z.object({
@@ -26,29 +24,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const response: any = { success: true, articleId };
-    const resultArticleIds: number[] = [];
-
-    // If it's a search engine URL, extract and save the results
-    if (isSearchEngineUrl(validated.url)) {
-      try {
-        const searchResults = await extractSearchResults(validated.url);
-        if (searchResults.length > 0) {
-          const createdIds = createArticlesFromSearchResults(searchResults, validated.url);
-          resultArticleIds.push(...createdIds);
-        }
-      } catch (error) {
-        console.error("Failed to extract search results:", error);
-        // Don't fail the request, just log the error
-      }
-    }
-
-    if (resultArticleIds.length > 0) {
-      response.resultArticleIds = resultArticleIds;
-      response.resultCount = resultArticleIds.length;
-    }
-
-    return NextResponse.json(response, { status: 201 });
+    return NextResponse.json({ success: true, articleId }, { status: 201 });
 
   } catch (error) {
     if (error instanceof z.ZodError) {
