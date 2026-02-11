@@ -1,65 +1,96 @@
-import Image from "next/image";
+import { getArticleGroupsByCategory, getArticlesByCategory, getArticleCountByCategory, searchArticles } from "@/lib/db/queries";
+import ViewModeToggle from "@/components/ui/ViewModeToggle";
+import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
+import Pagination from "@/components/ui/Pagination";
+import EmptyState from "@/components/ui/EmptyState";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 
-export default function Home() {
+type ViewMode = "topics" | "compact" | "sources" | "timeline" | "list";
+
+function getPerPage(viewMode: ViewMode) {
+  if (viewMode === "list") return 200;
+  if (viewMode === "compact") return 50;
+  return 30;
+}
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ search?: string; category?: string; view?: string; page?: string }>;
+}) {
+  const { search, category, view, page: pageParam } = await searchParams;
+  const viewMode: ViewMode = (view === "compact" || view === "sources" || view === "timeline" || view === "list") ? view : "topics";
+  const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
+  const perPage = getPerPage(viewMode);
+  const counts = getArticleCountByCategory();
+
+  // Filter counts if category is selected
+  const filteredCounts = category ? counts.filter(c => c.slug === category) : counts;
+  const totalUnread = filteredCounts.reduce((sum, c) => sum + c.unread, 0);
+  const totalArticles = filteredCounts.reduce((sum, c) => sum + c.total, 0);
+  const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
+
+  let articles = null;
+  let groups = null;
+
+  if (search) {
+    articles = searchArticles(search, { category, limit: 50 });
+  } else {
+    if (viewMode === "topics" && currentPage === 1) {
+      groups = getArticleGroupsByCategory(category || null, perPage);
+    }
+
+    if (viewMode !== "topics" || !groups || groups.length === 0) {
+      articles = getArticlesByCategory(category || null, {
+        limit: perPage,
+        offset: (currentPage - 1) * perPage,
+      });
+    }
+  }
+
+  const hasContent = (articles && articles.length > 0) || (groups && groups.length > 0);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="p-6">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            {search ? `Search: "${search}"` : "Discover"}
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {search
+              ? `Showing results for "${search}"`
+              : category
+              ? `Showing ${category.charAt(0).toUpperCase() + category.slice(1).replace(/-/g, " ")} articles`
+              : "Latest news from all your feeds"}
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <RefreshButton />
+      </div>
+
+      {!search && (
+        <div className="mb-4 flex items-center justify-end">
+          <ViewModeToggle viewMode={viewMode} />
         </div>
-      </main>
+      )}
+
+      {hasContent ? (
+        <>
+          {!search && <Pagination currentPage={currentPage} totalPages={totalPages} />}
+          <ArticleListWithToolbar
+            articles={articles ?? undefined}
+            groups={groups && groups.length > 0 ? groups : undefined}
+            viewMode={viewMode}
+            unreadCount={totalUnread}
+          />
+        </>
+      ) : (
+        <EmptyState
+          title="No articles yet"
+          description="Refresh your feeds to start reading the latest news."
+          action={<RefreshButton />}
+        />
+      )}
     </div>
   );
 }
