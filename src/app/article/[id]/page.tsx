@@ -64,9 +64,15 @@ export default async function ArticlePage({
   let searchResults = null;
   let searchQuery = null;
 
+  console.log("[Article Page] feedName:", article.feedName, "link:", article.link);
+  console.log("[Article Page] isSearchEngineUrl:", isSearchEngineUrl(article.link));
+
   if (article.feedName === "Manual Links" && isSearchEngineUrl(article.link)) {
     try {
+      console.log("[Article Page] Fetching search results for:", article.link);
       const results = await extractSearchResults(article.link);
+      console.log("[Article Page] Got", results.length, "results");
+
       if (results.length > 0) {
         // Convert ExtractedSearchResult to match component props
         searchResults = results.map((r) => ({
@@ -77,9 +83,10 @@ export default async function ArticlePage({
         // Extract query from URL for display
         const searchInfo = detectSearchEngine(article.link);
         searchQuery = searchInfo?.query || undefined;
+        console.log("[Article Page] Set searchResults:", searchResults.length, "query:", searchQuery);
       }
     } catch (error) {
-      console.error("Failed to fetch search results:", error);
+      console.error("[Article Page] Failed to fetch search results:", error);
       // Don't fail the page, just skip displaying results
     }
   }
@@ -148,11 +155,15 @@ export default async function ArticlePage({
         )}
 
         {/* Search Results Summary */}
-        {searchResults && searchResults.length > 0 && (
+        {(searchResults && searchResults.length > 0) || (article.feedName === "Manual Links" && isSearchEngineUrl(article.link)) ? (
           <div className="mb-8">
-            <SearchResultsSummary results={searchResults} query={searchQuery || undefined} />
+            <SearchResultsSummary
+              results={searchResults || []}
+              query={searchQuery || undefined}
+              fallbackLink={article.feedName === "Manual Links" && isSearchEngineUrl(article.link) ? article.link : undefined}
+            />
           </div>
-        )}
+        ) : null}
 
         {/* AI Summary — triggers on-demand summarization if none exists */}
         <ArticleSummary articleId={article.id} initialSummary={article.summary} />
