@@ -1,5 +1,5 @@
 export interface VideoInfo {
-  type: 'youtube' | 'vimeo' | 'unknown';
+  type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'unknown';
   videoId: string;
   embedUrl: string;
 }
@@ -56,6 +56,43 @@ export function extractVideoInfo(url: string): VideoInfo | null {
           type: 'vimeo',
           videoId,
           embedUrl: `https://player.vimeo.com/video/${videoId}`,
+        };
+      }
+    }
+
+    // Dailymotion
+    if (urlObj.hostname === 'www.dailymotion.com' || urlObj.hostname === 'dailymotion.com') {
+      const videoId = urlObj.pathname.match(/\/video\/([a-zA-Z0-9]+)/)?.[1];
+      if (videoId) {
+        return {
+          type: 'dailymotion',
+          videoId,
+          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}`,
+        };
+      }
+    }
+
+    // Dailymotion short link
+    if (urlObj.hostname === 'dai.ly') {
+      const videoId = urlObj.pathname.slice(1);
+      if (videoId) {
+        return {
+          type: 'dailymotion',
+          videoId,
+          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}`,
+        };
+      }
+    }
+
+    // Odysee
+    if (urlObj.hostname === 'odysee.com' || urlObj.hostname === 'www.odysee.com') {
+      const path = urlObj.pathname;
+      // Odysee video paths contain @ for channels or direct video slugs
+      if (path.length > 1 && !path.startsWith('/$/')) {
+        return {
+          type: 'odysee',
+          videoId: path,
+          embedUrl: `https://odysee.com/$/embed${path}`,
         };
       }
     }
