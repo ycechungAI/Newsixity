@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getArticleById, markArticleRead, getArticleGroupsByCategory, getSearchResults } from "@/lib/db/queries";
+import { getArticleById, markArticleRead, getArticleGroupsByCategory } from "@/lib/db/queries";
 import { formatDate } from "@/lib/utils/date";
 import { isVideoUrl } from "@/lib/utils/video";
 import { isSearchEngineUrl, detectSearchEngine } from "@/lib/utils/search";
+import { extractSearchResults } from "@/lib/server/search-extractor";
 import ArticleSummary from "@/components/articles/ArticleSummary";
 import VideoEmbed from "@/components/articles/VideoEmbed";
 import WebPageEmbed from "@/components/articles/WebPageEmbed";
@@ -59,17 +60,27 @@ export default async function ArticlePage({
   // Mark the article as read server-side
   markArticleRead(articleId);
 
-  // Get search results if this is a search engine article
+  // Fetch search results on-demand if this is a search engine article
   let searchResults = null;
   let searchQuery = null;
 
   if (article.feedName === "Manual Links" && isSearchEngineUrl(article.link)) {
-    const results = getSearchResults(article.link);
-    if (results.length > 0) {
-      searchResults = results;
-      // Extract query from URL for display
-      const searchInfo = detectSearchEngine(article.link);
-      searchQuery = searchInfo?.query || undefined;
+    try {
+      const results = await extractSearchResults(article.link);
+      if (results.length > 0) {
+        // Convert ExtractedSearchResult to match component props
+        searchResults = results.map((r) => ({
+          id: 0, // Placeholder since results aren't stored as articles
+          title: r.title,
+          link: r.url,
+        }));
+        // Extract query from URL for display
+        const searchInfo = detectSearchEngine(article.link);
+        searchQuery = searchInfo?.query || undefined;
+      }
+    } catch (error) {
+      console.error("Failed to fetch search results:", error);
+      // Don't fail the page, just skip displaying results
     }
   }
 
