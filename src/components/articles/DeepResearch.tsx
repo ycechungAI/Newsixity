@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { ResearchSource } from "@/types";
 
 interface ResearchHistory {
@@ -24,15 +24,8 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
   const [error, setError] = useState<string | null>(null);
   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
   const [history, setHistory] = useState<ResearchHistory[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Load research history on mount
-  useEffect(() => {
-    loadHistory();
-  }, [articleId]);
-
-  const loadHistory = async () => {
-    setLoadingHistory(true);
+  const loadHistory = useCallback(async () => {
     try {
       const res = await fetch(`/api/research/history?articleId=${articleId}`);
       if (res.ok) {
@@ -41,10 +34,13 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
       }
     } catch (e) {
       console.error("Failed to load research history:", e);
-    } finally {
-      setLoadingHistory(false);
     }
-  };
+  }, [articleId]);
+
+  // Load research history on mount
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
 
   const handleDeleteHistory = async (researchId: number) => {
     if (!confirm("Delete this research? This action cannot be undone.")) {
@@ -106,7 +102,7 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
       }
 
       // Reload history to show the new research
-      loadHistory();
+      void loadHistory();
 
       // Clear the question input after successful research
       setQuestion("");

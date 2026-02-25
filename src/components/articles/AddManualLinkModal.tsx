@@ -9,11 +9,7 @@ interface AddManualLinkModalProps {
   onSuccess?: () => void;
 }
 
-export default function AddManualLinkModal({
-  isOpen,
-  onClose,
-  onSuccess,
-}: AddManualLinkModalProps) {
+export default function AddManualLinkModal({ isOpen, onClose, onSuccess }: AddManualLinkModalProps) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -24,26 +20,20 @@ export default function AddManualLinkModal({
     e.preventDefault();
     setLoading(true);
     setError(null);
-
     try {
       const response = await fetch("/api/articles/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, title, content: content || undefined }),
       });
-
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || "Failed to add link");
       }
-
-      setUrl("");
-      setTitle("");
-      setContent("");
+      setUrl(""); setTitle(""); setContent("");
       onClose();
       onSuccess?.();
       window.location.reload();
-
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -52,81 +42,68 @@ export default function AddManualLinkModal({
   };
 
   const handleClose = () => {
-    setUrl("");
-    setTitle("");
-    setContent("");
-    setError(null);
+    setUrl(""); setTitle(""); setContent(""); setError(null);
     onClose();
   };
 
+  const row: React.CSSProperties = { marginBottom: 10 };
+  const label: React.CSSProperties = { display: "block", fontSize: 10, color: "var(--muted)", marginBottom: 3 };
+
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Add External Link">
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit}>
         {error && (
-          <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
-            {error}
-          </div>
+          <div className="settings-msg err" style={{ marginBottom: 10 }}>{error}</div>
         )}
 
-        <div>
-          <label htmlFor="url" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            URL <span className="text-red-500">*</span>
-          </label>
+        <div style={row}>
+          <label style={label}>URL *</label>
           <input
             type="url"
-            id="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://example.com/article"
             required
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            className="settings-input"
+            style={{ width: "100%" }}
           />
         </div>
 
-        <div>
-          <label htmlFor="title" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Title <span className="text-red-500">*</span>
-          </label>
+        <div style={row}>
+          <label style={label}>Title *</label>
           <input
             type="text"
-            id="title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Article title"
             required
             maxLength={500}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            className="settings-input"
+            style={{ width: "100%" }}
           />
         </div>
 
-        <div>
-          <label htmlFor="content" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Description (optional)
-          </label>
+        <div style={row}>
+          <label style={label}>Description (optional)</label>
           <textarea
-            id="content"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Brief description or notes"
-            rows={4}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sky-500 focus:border-transparent resize-none"
+            rows={3}
+            className="settings-input"
+            style={{ width: "100%", resize: "vertical" }}
           />
         </div>
 
-        <div className="flex gap-3 pt-4">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-          >
-            Cancel
-          </button>
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <button type="button" onClick={handleClose} className="tb-btn" style={{ flex: 1 }}>Cancel</button>
           <button
             type="submit"
             disabled={loading || !url || !title}
-            className="flex-1 px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="settings-save-btn"
+            style={{ flex: 1 }}
           >
-            {loading ? "Adding..." : "Add Link"}
+            {loading ? "Adding…" : "Add Link"}
           </button>
         </div>
       </form>

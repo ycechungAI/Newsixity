@@ -4,10 +4,73 @@ import type { StockQuote, ChartDataPoint, StockSearchResult, CompanyProfile } fr
 // Initialize Yahoo Finance instance (v3 API)
 const yahooFinance = new YahooFinance();
 
+type YahooQuoteResult = {
+  symbol?: string;
+  longName?: string;
+  shortName?: string;
+  exchange?: string;
+  exchangeName?: string;
+  regularMarketPrice?: number;
+  regularMarketChange?: number;
+  regularMarketChangePercent?: number;
+  regularMarketVolume?: number | null;
+  marketCap?: number | null;
+  currency?: string;
+  fiftyTwoWeekHigh?: number | null;
+  fiftyTwoWeekLow?: number | null;
+  marketState?: 'PRE' | 'REGULAR' | 'POST' | 'CLOSED';
+};
+
+type YahooChartQuote = {
+  date?: Date | string;
+  close?: number | null;
+  volume?: number | null;
+};
+
+type YahooChartResult = {
+  quotes?: YahooChartQuote[] | null;
+};
+
+type YahooSearchQuote = {
+  symbol?: string;
+  shortname?: string;
+  longname?: string;
+  exchDisp?: string;
+  exchange?: string;
+  quoteType?: string;
+};
+
+type YahooSearchResult = {
+  quotes?: YahooSearchQuote[] | null;
+};
+
+type YahooSummaryProfile = {
+  longBusinessSummary?: string;
+};
+
+type YahooAssetProfile = YahooSummaryProfile & {
+  sector?: string;
+  industry?: string;
+  website?: string;
+  fullTimeEmployees?: number;
+  country?: string;
+};
+
+type YahooPriceProfile = {
+  longName?: string;
+  shortName?: string;
+};
+
+type YahooQuoteSummaryResult = {
+  assetProfile?: YahooAssetProfile;
+  summaryProfile?: YahooSummaryProfile;
+  price?: YahooPriceProfile;
+};
+
 // Fetch quote from Yahoo Finance
 export async function fetchYahooQuote(symbol: string): Promise<StockQuote> {
   try {
-    const result: any = await yahooFinance.quote(symbol);
+    const result = await yahooFinance.quote(symbol) as YahooQuoteResult | null;
 
     if (!result) {
       throw new Error(`Stock ${symbol} not found (possibly delisted)`);
@@ -43,20 +106,22 @@ export async function fetchYahooChart(
   interval: '1d' | '1h' | '5m' = '1d'
 ): Promise<ChartDataPoint[]> {
   try {
-    const result: any = await yahooFinance.chart(symbol, {
+    const result = await yahooFinance.chart(symbol, {
       period1,
       period2,
       interval,
-    });
+    }) as YahooChartResult | null;
 
     if (!result || !result.quotes || result.quotes.length === 0) {
       return [];
     }
 
-    return result.quotes.map((quote: any) => ({
-      date: quote.date.toISOString(),
+    return result.quotes.map((quote) => ({
+      date: (quote.date instanceof Date
+        ? quote.date
+        : new Date(quote.date ?? Date.now())).toISOString(),
       price: quote.close || 0,
-      volume: quote.volume,
+      volume: quote.volume ?? undefined,
     }));
   } catch (error) {
     console.error(`[Newsixity] Failed to fetch chart for ${symbol}:`, error);
@@ -67,17 +132,17 @@ export async function fetchYahooChart(
 // Search for stocks by query
 export async function searchYahooStocks(query: string): Promise<StockSearchResult[]> {
   try {
-    const results: any = await yahooFinance.search(query);
+    const results = await yahooFinance.search(query) as YahooSearchResult | null;
 
     if (!results || !results.quotes || results.quotes.length === 0) {
       return [];
     }
 
     return results.quotes
-      .filter((quote: any) => quote.symbol && quote.shortname)
-      .map((quote: any) => ({
-        symbol: quote.symbol!,
-        name: quote.shortname || quote.longname || quote.symbol!,
+      .filter((quote) => quote.symbol && quote.shortname)
+      .map((quote) => ({
+        symbol: quote.symbol ?? "",
+        name: quote.shortname || quote.longname || quote.symbol || "",
         exchange: quote.exchDisp || quote.exchange || 'UNKNOWN',
         type: quote.quoteType || 'EQUITY',
       }))
@@ -91,9 +156,9 @@ export async function searchYahooStocks(query: string): Promise<StockSearchResul
 // Get company profile from Yahoo Finance
 export async function fetchYahooProfile(symbol: string): Promise<CompanyProfile> {
   try {
-    const result: any = await yahooFinance.quoteSummary(symbol, {
+    const result = await yahooFinance.quoteSummary(symbol, {
       modules: ['assetProfile', 'summaryProfile', 'price'],
-    });
+    }) as YahooQuoteSummaryResult;
 
     const assetProfile = result.assetProfile;
     const summaryProfile = result.summaryProfile;

@@ -7,7 +7,7 @@ import {
 
 const ollama = new Ollama({ host: "http://localhost:11434" });
 
-const DEFAULT_MODEL = "llama3.2";
+const DEFAULT_MODEL = "qwen3-coder-next:cloud";
 const MAX_CONTENT_LENGTH = 3000;
 
 // ---------------------------------------------------------------------------

@@ -1,21 +1,49 @@
 import { NextResponse } from "next/server";
 import { createManualArticle, deleteManualArticle } from "@/lib/db/queries";
 import { z } from "zod";
+import { stripHtml } from "@/lib/utils/sanitize";
+import { internalServerError, validationError } from "@/lib/server/api-response";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { parseJsonBody } from "@/lib/server/request";
+
+const HttpUrlSchema = z
+  .string()
+  .url("Invalid URL")
+  .refine((url) => /^https?:\/\//i.test(url), {
+    message: "URL must use http:// or https://",
+  });
 
 const ManualArticleSchema = z.object({
-  url: z.string().url("Invalid URL"),
+  url: HttpUrlSchema,
   title: z.string().min(1, "Title required").max(500),
-  content: z.string().optional(),
-  imageUrl: z.string().url().optional(),
+  content: z.string().max(50000).optional(),
+  imageUrl: HttpUrlSchema.optional(),
   author: z.string().optional(),
 });
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const validated = ManualArticleSchema.parse(body);
+const ManualArticleDeleteQuerySchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
 
-    const articleId = createManualArticle(validated);
+export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "manual-article-post",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
+  try {
+    const validated = await parseJsonBody(request, ManualArticleSchema);
+
+    const sanitized = {
+      ...validated,
+      title: stripHtml(validated.title).slice(0, 500),
+      content: validated.content ? stripHtml(validated.content).slice(0, 8000) : undefined,
+      author: validated.author ? stripHtml(validated.author).slice(0, 200) : undefined,
+    };
+
+    const articleId = createManualArticle(sanitized);
 
     if (!articleId) {
       return NextResponse.json(
@@ -28,25 +56,25 @@ export async function POST(request: Request) {
 
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 }
-      );
+      return validationError(error);
     }
-
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Manual article POST error", error);
   }
 }
 
 export async function DELETE(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "manual-article-delete",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const id = parseInt(searchParams.get("id") ?? "", 10);
-
-    if (isNaN(id)) {
-      return NextResponse.json({ error: "Invalid article ID" }, { status: 400 });
-    }
+    const { id } = ManualArticleDeleteQuerySchema.parse({
+      id: searchParams.get("id"),
+    });
 
     const deleted = deleteManualArticle(id);
 
@@ -60,7 +88,9 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ success: true });
 
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (error instanceof z.ZodError) {
+      return validationError(error);
+    }
+    return internalServerError("Manual article DELETE error", error);
   }
 }

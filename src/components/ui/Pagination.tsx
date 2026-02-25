@@ -1,96 +1,59 @@
-"use client";
-
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import Link from "next/link";
 
 interface PaginationProps {
   currentPage: number;
   totalPages: number;
+  searchParams?: Record<string, string | undefined>;
 }
 
-export default function Pagination({ currentPage, totalPages }: PaginationProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
+function buildHref(page: number, current: Record<string, string | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(current)) {
+    if (k === "page" || !v) continue;
+    params.set(k, v);
+  }
+  if (page > 1) params.set("page", String(page));
+  const qs = params.toString();
+  return qs ? `/?${qs}` : "/";
+}
 
+export default function Pagination({ currentPage, totalPages, searchParams = {} }: PaginationProps) {
   if (totalPages <= 1) return null;
 
-  function goToPage(page: number) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (page <= 1) {
-      params.delete("page");
-    } else {
-      params.set("page", String(page));
-    }
-    const query = params.toString();
-    router.push(query ? `${pathname}?${query}` : pathname);
-  }
-
-  const pages: number[] = [];
   const start = Math.max(1, currentPage - 2);
-  const end = Math.min(totalPages, currentPage + 2);
-  for (let i = start; i <= end; i++) {
-    pages.push(i);
-  }
+  const end   = Math.min(totalPages, currentPage + 2);
+  const pages: number[] = [];
+  for (let i = start; i <= end; i++) pages.push(i);
 
   return (
-    <div className="flex items-center justify-center gap-1 mb-4">
-      <button
-        onClick={() => goToPage(currentPage - 1)}
-        disabled={currentPage <= 1}
-        className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
-        Prev
-      </button>
+    <div className="pagination">
+      {currentPage > 1
+        ? <Link href={buildHref(currentPage - 1, searchParams)} className="pg-btn">‹ Prev</Link>
+        : <span className="pg-btn" style={{ opacity: .4 }}>‹ Prev</span>}
 
       {start > 1 && (
         <>
-          <button
-            onClick={() => goToPage(1)}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            1
-          </button>
-          {start > 2 && (
-            <span className="px-1 text-gray-400 dark:text-gray-500 text-sm">...</span>
-          )}
+          <Link href={buildHref(1, searchParams)} className="pg-btn">1</Link>
+          {start > 2 && <span style={{ color: "var(--subtle)", padding: "0 2px" }}>…</span>}
         </>
       )}
 
-      {pages.map((p) => (
-        <button
-          key={p}
-          onClick={() => goToPage(p)}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            p === currentPage
-              ? "bg-sky-600 text-white"
-              : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-          }`}
-        >
-          {p}
-        </button>
-      ))}
+      {pages.map(p =>
+        p === currentPage
+          ? <span key={p} className="pg-btn current">{p}</span>
+          : <Link key={p} href={buildHref(p, searchParams)} className="pg-btn">{p}</Link>
+      )}
 
       {end < totalPages && (
         <>
-          {end < totalPages - 1 && (
-            <span className="px-1 text-gray-400 dark:text-gray-500 text-sm">...</span>
-          )}
-          <button
-            onClick={() => goToPage(totalPages)}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            {totalPages}
-          </button>
+          {end < totalPages - 1 && <span style={{ color: "var(--subtle)", padding: "0 2px" }}>…</span>}
+          <Link href={buildHref(totalPages, searchParams)} className="pg-btn">{totalPages}</Link>
         </>
       )}
 
-      <button
-        onClick={() => goToPage(currentPage + 1)}
-        disabled={currentPage >= totalPages}
-        className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
-        Next
-      </button>
+      {currentPage < totalPages
+        ? <Link href={buildHref(currentPage + 1, searchParams)} className="pg-btn">Next ›</Link>
+        : <span className="pg-btn" style={{ opacity: .4 }}>Next ›</span>}
     </div>
   );
 }

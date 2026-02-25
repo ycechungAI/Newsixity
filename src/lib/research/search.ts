@@ -1,10 +1,18 @@
-import type { ResearchSource } from "@/types";
-
 export interface SearchResult {
   url: string;
   title: string;
   snippet: string;
 }
+
+type BraveSearchResponse = {
+  web?: {
+    results?: Array<{
+      url?: string;
+      title?: string;
+      description?: string;
+    }>;
+  };
+};
 
 /**
  * Search the web using Brave Search API (free tier: 2000/month).
@@ -36,12 +44,14 @@ export async function searchDuckDuckGo(
       );
 
       if (response.ok) {
-        const data = await response.json();
-        const results: SearchResult[] = (data.web?.results || []).map((r: any) => ({
-          url: r.url,
-          title: r.title,
-          snippet: r.description || "",
-        }));
+        const data = await response.json() as BraveSearchResponse;
+        const results: SearchResult[] = (data.web?.results || [])
+          .filter((result) => result.url && result.title)
+          .map((result) => ({
+            url: result.url || "",
+            title: result.title || "",
+            snippet: result.description || "",
+          }));
 
         console.log(`[Newsixity] Brave Search API found ${results.length} results for: ${query}`);
         return results;

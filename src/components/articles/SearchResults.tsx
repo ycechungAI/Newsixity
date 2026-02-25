@@ -11,10 +11,9 @@ interface SearchLink {
 
 interface SearchResultsProps {
   url: string;
-  title?: string;
 }
 
-export default function SearchResults({ url, title }: SearchResultsProps) {
+export default function SearchResults({ url }: SearchResultsProps) {
   const [results, setResults] = useState<SearchLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +132,7 @@ export default function SearchResults({ url, title }: SearchResultsProps) {
         <div className="flex items-center gap-3">
           <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
           <p className="text-blue-700 dark:text-blue-400">
-            Fetching results for "{searchInfo?.query}"...
+            Fetching results for &ldquo;{searchInfo?.query}&rdquo;...
           </p>
         </div>
       </div>
@@ -159,7 +158,7 @@ export default function SearchResults({ url, title }: SearchResultsProps) {
           </span>
         </div>
         <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-          "{searchInfo.query}"
+          &ldquo;{searchInfo.query}&rdquo;
         </h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
           {results.length > 0

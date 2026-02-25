@@ -26,7 +26,7 @@ export function detectSearchEngine(url: string): DetectedSearchEngine | null {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.toLowerCase();
 
-    for (const [key, engine] of Object.entries(SEARCH_ENGINES)) {
+    for (const engine of Object.values(SEARCH_ENGINES)) {
       if (hostname.includes(engine.domain)) {
         const query = urlObj.searchParams.get(engine.queryParam);
         if (query) {

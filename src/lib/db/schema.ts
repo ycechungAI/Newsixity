@@ -115,6 +115,16 @@ export function initializeSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_slug TEXT NOT NULL,
+      keyword TEXT NOT NULL,
+      weight REAL NOT NULL DEFAULT 1.0,
+      source TEXT NOT NULL DEFAULT 'auto',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(category_slug, keyword)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_articles_feed_id ON articles(feed_id);
     CREATE INDEX IF NOT EXISTS idx_articles_group_id ON articles(group_id);
     CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
@@ -123,9 +133,32 @@ export function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_feeds_category_id ON feeds(category_id);
     CREATE INDEX IF NOT EXISTS idx_article_groups_category_id ON article_groups(category_id);
     CREATE INDEX IF NOT EXISTS idx_article_research_article_id ON article_research(article_id);
+    CREATE INDEX IF NOT EXISTS idx_user_preferences_category ON user_preferences(category_slug);
     CREATE INDEX IF NOT EXISTS idx_stock_quotes_expires ON stock_quotes_cache(expires_at);
     CREATE INDEX IF NOT EXISTS idx_stock_charts_expires ON stock_charts_cache(expires_at);
     CREATE INDEX IF NOT EXISTS idx_heatmap_snapshots_date ON market_heatmap_snapshots(date DESC);
+  `);
+
+  // Migrations for existing databases — add columns if missing
+  const articleCols = db.prepare("PRAGMA table_info(articles)").all() as { name: string }[];
+  const articleColNames = new Set(articleCols.map((c) => c.name));
+  if (!articleColNames.has("relevance_score")) {
+    db.exec("ALTER TABLE articles ADD COLUMN relevance_score REAL DEFAULT 0");
+  }
+  if (!articleColNames.has("is_promoted")) {
+    db.exec("ALTER TABLE articles ADD COLUMN is_promoted INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const feedCols = db.prepare("PRAGMA table_info(feeds)").all() as { name: string }[];
+  const feedColNames = new Set(feedCols.map((c) => c.name));
+  if (!feedColNames.has("source_weight")) {
+    db.exec("ALTER TABLE feeds ADD COLUMN source_weight REAL NOT NULL DEFAULT 1.0");
+  }
+
+  // Create indexes for new columns after migration
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_articles_promoted ON articles(is_promoted) WHERE is_promoted = 1;
+    CREATE INDEX IF NOT EXISTS idx_articles_relevance ON articles(relevance_score DESC);
   `);
 
   // Seed default categories

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Ollama } from "ollama";
 import { getSetting } from "@/lib/db/queries";
+import { internalServerError } from "@/lib/server/api-response";
 
 // Suggested models with descriptions
 const SUGGESTED_MODELS = [
@@ -36,6 +37,12 @@ const SUGGESTED_MODELS = [
   },
 ];
 
+type OllamaModelInfo = {
+  name: string;
+  size: number | string;
+  modified_at?: string | Date;
+};
+
 export async function GET() {
   try {
     // Get Ollama host from settings or use default
@@ -43,12 +50,16 @@ export async function GET() {
     const ollama = new Ollama({ host });
 
     // Try to list models
-    let installedModels: any[] = [];
+    let installedModels: OllamaModelInfo[] = [];
     let isRunning = false;
 
     try {
       const response = await ollama.list();
-      installedModels = response.models || [];
+      installedModels = (response.models || []).map((model) => ({
+        name: model.name,
+        size: model.size,
+        modified_at: model.modified_at,
+      }));
       isRunning = true;
     } catch (e) {
       console.warn("[Newsixity] Ollama not reachable:", e instanceof Error ? e.message : String(e));
@@ -76,8 +87,6 @@ export async function GET() {
       suggestions,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Ollama models error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Ollama models GET error", e);
   }
 }

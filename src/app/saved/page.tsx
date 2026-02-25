@@ -32,13 +32,7 @@ export default async function SavedPage({
   const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const perPage = getPerPage(viewMode);
 
-  // Get categories for tabs
-  const allCategories = getCategories().map((cat) => ({
-    ...cat,
-    total: 0,
-    unread: 0,
-  }));
-
+  const allCategories = getCategories().map((cat) => ({ ...cat, total: 0, unread: 0 }));
   const totalSaved = getSavedArticleCount(category);
   const totalPages = Math.max(1, Math.ceil(totalSaved / perPage));
 
@@ -48,36 +42,31 @@ export default async function SavedPage({
     categorySlug: category,
   });
 
+  const categoryName = category ? (allCategories.find((c) => c.slug === category)?.name ?? category) : null;
+
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="page">
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Saved Articles</h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <div className="page-title">Saved</div>
+          <div className="page-sub">
             {totalSaved} bookmarked article{totalSaved !== 1 ? "s" : ""}
-            {category && (
-              <span className="ml-1">
-                in {allCategories.find((c) => c.slug === category)?.name || category}
-              </span>
-            )}
-          </p>
+            {categoryName && ` in ${categoryName}`}
+          </div>
         </div>
         <SavedViewModeToggle viewMode={viewMode} />
       </div>
 
-      {/* Category Filter Tabs */}
-      <div className="mb-4">
-        <CategoryTabs
-          categories={allCategories}
-          activeSlug={category}
-          basePath="/saved"
-          preserveParams={{ view }}
-        />
-      </div>
+      <CategoryTabs
+        categories={allCategories}
+        activeSlug={category}
+        basePath="/saved"
+        preserveParams={{ view }}
+      />
 
       {articles.length > 0 ? (
         <>
-          <Pagination currentPage={currentPage} totalPages={totalPages} />
+          <Pagination currentPage={currentPage} totalPages={totalPages} searchParams={{ view, category }} />
           <ArticleList
             articles={articles}
             viewMode={toArticleListViewMode(viewMode)}

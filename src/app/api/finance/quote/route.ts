@@ -6,29 +6,43 @@ import {
   cleanExpiredQuotes,
 } from "@/lib/db/queries";
 import { QUOTE_CACHE_MINUTES } from "@/lib/finance/constants";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
+
+const FinanceQuoteQuerySchema = z.object({
+  symbols: z.string().trim().min(1).max(600),
+});
+
+const SYMBOL_REGEX = /^[A-Z0-9.^-]{1,15}$/;
 
 export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-quote",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const symbolsParam = searchParams.get("symbols");
-
-    if (!symbolsParam) {
-      return NextResponse.json(
-        { error: "Symbols parameter is required" },
-        { status: 400 }
-      );
-    }
+    const { symbols: symbolsParam } = FinanceQuoteQuerySchema.parse({
+      symbols: searchParams.get("symbols") ?? undefined,
+    });
 
     const symbols = symbolsParam
       .split(",")
       .map((s) => s.trim().toUpperCase())
-      .filter((s) => s.length > 0);
+      .filter((s) => s.length > 0)
+      .slice(0, 25);
 
     if (symbols.length === 0) {
-      return NextResponse.json(
-        { error: "At least one symbol is required" },
-        { status: 400 }
-      );
+      return badRequest("At least one symbol is required");
+    }
+
+    const invalidSymbols = symbols.filter((symbol) => !SYMBOL_REGEX.test(symbol));
+    if (invalidSymbols.length > 0) {
+      return badRequest(`Invalid symbols: ${invalidSymbols.join(", ")}`);
     }
 
     // Clean expired cache entries (opportunistic cleanup)
@@ -48,7 +62,7 @@ export async function GET(request: Request) {
       freshQuotes = await fetchYahooQuotes(uncachedSymbols);
 
       // Cache fresh quotes
-      for (const [symbol, quote] of freshQuotes) {
+      for (const [, quote] of freshQuotes) {
         setCachedQuote(quote, QUOTE_CACHE_MINUTES);
       }
     }
@@ -59,8 +73,9 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ quotes });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Quote fetch error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Finance quote GET error", e);
   }
 }
