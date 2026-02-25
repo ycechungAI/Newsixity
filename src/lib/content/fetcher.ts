@@ -3,9 +3,76 @@
  * Tries a simple HTTP fetch first, then falls back to headless Chromium for
  * JS-rendered sites (e.g. Yahoo Finance).
  */
+import { lookup } from "dns/promises";
+import net from "net";
+import { parseHttpUrl } from "@/lib/utils/url";
 
 const FETCH_TIMEOUT = 10000;
 const BROWSER_TIMEOUT = 30000;
+const BLOCKED_HOSTNAMES = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "0.0.0.0",
+  "host.docker.internal",
+  "metadata.google.internal",
+]);
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split(".").map((p) => Number.parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) {
+    return false;
+  }
+
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 0) return true;
+  return false;
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const value = address.toLowerCase();
+  if (value === "::1" || value === "0:0:0:0:0:0:0:1") return true;
+  if (value.startsWith("fe80:")) return true; // link-local
+  if (value.startsWith("fc") || value.startsWith("fd")) return true; // ULA
+
+  if (value.startsWith("::ffff:")) {
+    const mapped = value.slice("::ffff:".length);
+    return isPrivateIpv4(mapped);
+  }
+
+  return false;
+}
+
+function isBlockedIp(address: string): boolean {
+  const ipType = net.isIP(address);
+  if (ipType === 4) return isPrivateIpv4(address);
+  if (ipType === 6) return isPrivateIpv6(address);
+  return true;
+}
+
+async function resolvesToBlockedIp(hostname: string): Promise<boolean> {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) return true;
+  if (BLOCKED_HOSTNAMES.has(normalized)) return true;
+
+  if (net.isIP(normalized) !== 0) {
+    return isBlockedIp(normalized);
+  }
+
+  try {
+    const addresses = await lookup(normalized, { all: true, verbatim: true });
+    if (addresses.length === 0) return true;
+    return addresses.some(({ address }) => isBlockedIp(address));
+  } catch {
+    // Fail closed for network target validation.
+    return true;
+  }
+}
 
 function stripHtmlTags(html: string): string {
   return html
@@ -194,10 +261,23 @@ async function fetchWithHttp(url: string): Promise<string | null> {
  * Tries simple HTTP first, falls back to headless browser for JS-heavy sites.
  */
 export async function fetchArticleContent(url: string): Promise<string | null> {
+  const parsedUrl = parseHttpUrl(url);
+  if (!parsedUrl) {
+    console.warn(`[Newsixity] Skipping non-http URL during content fetch: ${url}`);
+    return null;
+  }
+
+  if (await resolvesToBlockedIp(parsedUrl.hostname)) {
+    console.warn(`[Newsixity] Blocked potential SSRF target: ${parsedUrl.hostname}`);
+    return null;
+  }
+
+  const safeUrl = parsedUrl.toString();
+
   // For known JS-heavy sites, go straight to browser
-  if (needsBrowser(url)) {
-    console.log(`[Newsixity] Using browser fetch for JS-heavy site: ${url}`);
-    const html = await fetchWithBrowser(url);
+  if (needsBrowser(safeUrl)) {
+    console.log(`[Newsixity] Using browser fetch for JS-heavy site: ${safeUrl}`);
+    const html = await fetchWithBrowser(safeUrl);
     if (html) {
       const text = extractArticleText(html);
       if (text && text.length > 100) return text;
@@ -206,15 +286,15 @@ export async function fetchArticleContent(url: string): Promise<string | null> {
   }
 
   // Try simple HTTP fetch first
-  const html = await fetchWithHttp(url);
+  const html = await fetchWithHttp(safeUrl);
   if (html) {
     const text = extractArticleText(html);
     if (text && text.length > 100) return text;
   }
 
   // Fallback to browser if simple fetch got no useful content
-  console.log(`[Newsixity] Simple fetch got no content, trying browser for: ${url}`);
-  const browserHtml = await fetchWithBrowser(url);
+  console.log(`[Newsixity] Simple fetch got no content, trying browser for: ${safeUrl}`);
+  const browserHtml = await fetchWithBrowser(safeUrl);
   if (browserHtml) {
     const text = extractArticleText(browserHtml);
     if (text && text.length > 100) return text;

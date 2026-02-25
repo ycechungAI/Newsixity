@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   getCategories,
   getAllFeeds,
-  getArticlesByCategory,
 } from "@/lib/db/queries";
 import { isOllamaAvailable, getAvailableModels } from "@/lib/ollama/client";
 import type { HealthStatus } from "@/types";
@@ -31,7 +30,6 @@ export async function GET() {
       }
     }
 
-    const articles = getArticlesByCategory(null, { limit: 1 });
     // Use a count query for accuracy
     const { getDb } = await import("@/lib/db");
     const countRow = getDb()

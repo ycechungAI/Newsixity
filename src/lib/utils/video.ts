@@ -1,5 +1,5 @@
 export interface VideoInfo {
-  type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'unknown';
+  type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'animex' | 'unknown';
   videoId: string;
   embedUrl: string;
   playlistId?: string;
@@ -13,6 +13,15 @@ export interface VideoInfo {
 export function extractVideoInfo(url: string): VideoInfo | null {
   try {
     const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const isYouTubeHost = [
+      "youtube.com",
+      "www.youtube.com",
+      "m.youtube.com",
+      "music.youtube.com",
+      "youtube-nocookie.com",
+      "www.youtube-nocookie.com",
+    ].includes(hostname);
 
     // YouTube playlist ID (shared across YouTube URL types)
     const ytPlaylistId = urlObj.searchParams.get('list') || undefined;
@@ -21,7 +30,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
       : {};
 
     // YouTube playlist-only URL (/playlist?list=PLxxx)
-    if ((urlObj.hostname === 'youtube.com' || urlObj.hostname === 'www.youtube.com') && urlObj.pathname === '/playlist') {
+    if (isYouTubeHost && urlObj.pathname === '/playlist') {
       if (ytPlaylistId) {
         return {
           type: 'youtube',
@@ -33,7 +42,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
     }
 
     // YouTube standard video
-    if (urlObj.hostname === 'youtube.com' || urlObj.hostname === 'www.youtube.com') {
+    if (isYouTubeHost) {
       const videoId = urlObj.searchParams.get('v');
       if (videoId) {
         return {
@@ -46,8 +55,8 @@ export function extractVideoInfo(url: string): VideoInfo | null {
     }
 
     // YouTube short link
-    if (urlObj.hostname === 'youtu.be') {
-      const videoId = urlObj.pathname.slice(1);
+    if (hostname === 'youtu.be') {
+      const videoId = urlObj.pathname.split("/").filter(Boolean)[0];
       if (videoId) {
         return {
           type: 'youtube',
@@ -59,7 +68,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
     }
 
     // YouTube Shorts
-    if (urlObj.hostname === 'www.youtube.com' && urlObj.pathname.startsWith('/shorts/')) {
+    if (isYouTubeHost && urlObj.pathname.startsWith('/shorts/')) {
       const videoId = urlObj.pathname.split('/shorts/')[1];
       if (videoId) {
         return {
@@ -89,7 +98,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
         return {
           type: 'dailymotion',
           videoId,
-          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}`,
+          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}?autoplay=0&mute=1`,
         };
       }
     }
@@ -101,7 +110,7 @@ export function extractVideoInfo(url: string): VideoInfo | null {
         return {
           type: 'dailymotion',
           videoId,
-          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}`,
+          embedUrl: `https://www.dailymotion.com/embed/video/${videoId}?autoplay=0&mute=1`,
         };
       }
     }
@@ -119,6 +128,22 @@ export function extractVideoInfo(url: string): VideoInfo | null {
       }
     }
 
+    // Animex.one - anime streaming site
+    if (urlObj.hostname === 'animex.one' || urlObj.hostname === 'www.animex.one') {
+      const path = urlObj.pathname;
+      // Animex paths like /watch/episode-id
+      if (path.startsWith('/watch/')) {
+        const episodeId = path.split('/watch/')[1];
+        if (episodeId) {
+          return {
+            type: 'animex',
+            videoId: episodeId,
+            embedUrl: url, // Use original URL as embed (site handles its own player)
+          };
+        }
+      }
+    }
+
     return null;
   } catch {
     return null;
@@ -130,4 +155,69 @@ export function extractVideoInfo(url: string): VideoInfo | null {
  */
 export function isVideoUrl(url: string): boolean {
   return extractVideoInfo(url) !== null;
+}
+
+export interface PlaylistItem {
+  title: string;
+  videoId: string;
+  url: string;
+}
+
+export interface PlaylistPagination {
+  currentPage: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+/**
+ * Fetch YouTube playlist contents via RSS feed.
+ * Returns up to 20 most recent videos (10 per page, max 2 pages).
+ */
+export async function fetchYouTubePlaylist(
+  playlistId: string,
+  options?: { page?: number; pageSize?: number }
+): Promise<{ items: PlaylistItem[]; pagination: PlaylistPagination }> {
+  const page = options?.page ?? 1;
+  const pageSize = options?.pageSize ?? 10;
+
+  try {
+    // YouTube RSS feeds support start-index and max-results parameters
+    // start-index is 1-based, max-results maxes out at 15-20 for playlists
+    const startIndex = (page - 1) * pageSize + 1;
+    const feedUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${playlistId}&start-index=${startIndex}&max-results=${pageSize}`;
+    const res = await fetch(feedUrl, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return { items: [], pagination: { currentPage: page, pageSize, totalItems: 0, totalPages: 0 } };
+
+    const xml = await res.text();
+
+    const items: PlaylistItem[] = [];
+    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+    let match;
+
+    while ((match = entryRegex.exec(xml))) {
+      const block = match[1];
+      const title = block.match(/<title>([^<]+)<\/title>/)?.[1];
+      const videoId = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1];
+
+      if (title && videoId) {
+        items.push({ title, videoId, url: `https://www.youtube.com/watch?v=${videoId}` });
+      }
+    }
+
+    // YouTube RSS only supports 1-2 pages max (capped at ~15-20 items total)
+    const totalPages = page === 1 && items.length >= pageSize ? 2 : 1;
+
+    return {
+      items,
+      pagination: {
+        currentPage: page,
+        pageSize,
+        totalItems: items.length,
+        totalPages,
+      },
+    };
+  } catch {
+    return { items: [], pagination: { currentPage: page, pageSize, totalItems: 0, totalPages: 0 } };
+  }
 }

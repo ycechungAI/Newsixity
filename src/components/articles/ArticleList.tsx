@@ -3,12 +3,8 @@
 import type { Article, ArticleGroup as ArticleGroupType } from "@/types";
 import ArticleCard from "./ArticleCard";
 import ArticleGroup from "./ArticleGroup";
-import ArticlesBySource from "./ArticlesBySource";
-import ArticlesByDate from "./ArticlesByDate";
-import ArticlesByCategory from "./ArticlesByCategory";
-import EmptyState from "../ui/EmptyState";
 
-export type ViewMode = "topics" | "compact" | "sources" | "timeline" | "list" | "categories";
+export type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list" | "categories";
 
 interface ArticleListProps {
   articles?: Article[];
@@ -18,25 +14,38 @@ interface ArticleListProps {
   autoMarkRead?: boolean;
 }
 
-function flattenArticles(
-  articles?: Article[],
-  groups?: ArticleGroupType[]
-): Article[] {
-  if (articles && articles.length > 0) return articles;
-  if (groups && groups.length > 0) {
+function flatten(articles?: Article[], groups?: ArticleGroupType[]): Article[] {
+  if (articles?.length) return articles;
+  if (groups?.length) {
     const seen = new Set<number>();
-    const flat: Article[] = [];
-    for (const group of groups) {
-      for (const article of group.articles) {
-        if (!seen.has(article.id)) {
-          seen.add(article.id);
-          flat.push(article);
-        }
+    const out: Article[] = [];
+    for (const g of groups) {
+      for (const a of g.articles) {
+        if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
       }
     }
-    return flat;
+    return out;
   }
   return [];
+}
+
+function groupBy<T>(arr: T[], key: (item: T) => string): [string, T[]][] {
+  const map = new Map<string, T[]>();
+  for (const item of arr) {
+    const k = key(item);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k)!.push(item);
+  }
+  return Array.from(map.entries());
+}
+
+function Empty({ message }: { message?: string }) {
+  return (
+    <div className="empty">
+      <div className="empty-title">{message ?? "No articles yet"}</div>
+      <div className="empty-desc">Refresh your feeds to fetch the latest articles.</div>
+    </div>
+  );
 }
 
 export default function ArticleList({
@@ -46,106 +55,71 @@ export default function ArticleList({
   emptyMessage,
   autoMarkRead = true,
 }: ArticleListProps) {
-  // List view: flat email-inbox-style rows
-  if (viewMode === "list") {
-    const allArticles = flattenArticles(articles, groups);
-    if (allArticles.length === 0) {
-      return (
-        <EmptyState
-          title={emptyMessage || "No articles yet"}
-          description="Refresh your feeds to fetch the latest articles."
-        />
-      );
-    }
 
+  // Cards view — 3-column image grid
+  if (viewMode === "cards") {
+    const all = flatten(articles, groups);
+    if (all.length === 0) return <Empty message={emptyMessage} />;
     return (
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 overflow-hidden">
-        {allArticles.map((article) => (
-          <ArticleCard
-            key={article.id}
-            article={article}
-            listView
-            autoMarkRead={autoMarkRead}
-          />
+      <div className="card-grid">
+        {all.map(a => <ArticleCard key={a.id} article={a} autoMarkRead={autoMarkRead} cardView />)}
+      </div>
+    );
+  }
+
+  // Topics view — grouped articles
+  if (viewMode === "topics" && groups && groups.length > 0) {
+    return (
+      <div>
+        {groups.map(g => <ArticleGroup key={g.id} group={g} />)}
+      </div>
+    );
+  }
+
+  const all = flatten(articles, groups);
+  if (all.length === 0) return <Empty message={emptyMessage} />;
+
+  // Sources view — grouped by feed name
+  if (viewMode === "sources") {
+    const bySource = groupBy(all, a => a.feedName ?? "Unknown");
+    return (
+      <div>
+        {bySource.map(([src, arts]) => (
+          <div key={src} className="article-group">
+            <div className="group-label">{src}</div>
+            <ul className="article-list">
+              {arts.map(a => <ArticleCard key={a.id} article={a} autoMarkRead={autoMarkRead} />)}
+            </ul>
+          </div>
         ))}
       </div>
     );
   }
 
-  // Compact view: 5-column dense grid without descriptions
-  if (viewMode === "compact") {
-    const allArticles = flattenArticles(articles, groups);
-    if (allArticles.length === 0) {
-      return (
-        <EmptyState
-          title={emptyMessage || "No articles yet"}
-          description="Refresh your feeds to fetch the latest articles."
-        />
-      );
-    }
-
+  // Timeline view — grouped by date
+  if (viewMode === "timeline") {
+    const byDate = groupBy(all, a => {
+      const d = new Date(a.publishedAt ?? a.fetchedAt);
+      return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    });
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-        {allArticles.map((article) => (
-          <ArticleCard
-            key={article.id}
-            article={article}
-            compact
-            autoMarkRead={autoMarkRead}
-          />
+      <div>
+        {byDate.map(([date, arts]) => (
+          <div key={date} className="article-group">
+            <div className="group-label">{date}</div>
+            <ul className="article-list">
+              {arts.map(a => <ArticleCard key={a.id} article={a} autoMarkRead={autoMarkRead} />)}
+            </ul>
+          </div>
         ))}
       </div>
     );
   }
 
-  // Grouped views: categories, sources, timeline
-  if (viewMode === "categories" || viewMode === "sources" || viewMode === "timeline") {
-    const allArticles = flattenArticles(articles, groups);
-    if (allArticles.length === 0) {
-      return (
-        <EmptyState
-          title={emptyMessage || "No articles yet"}
-          description="Refresh your feeds to fetch the latest articles."
-        />
-      );
-    }
-
-    if (viewMode === "categories") {
-      return <ArticlesByCategory articles={allArticles} />;
-    }
-    if (viewMode === "sources") {
-      return <ArticlesBySource articles={allArticles} />;
-    }
-    return <ArticlesByDate articles={allArticles} />;
-  }
-
-  // Topics view (default): render grouped articles
-  if (groups && groups.length > 0) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {groups.map((group) => (
-          <ArticleGroup key={group.id} group={group} />
-        ))}
-      </div>
-    );
-  }
-
-  // Render flat article list (cards grid)
-  if (articles && articles.length > 0) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {articles.map((article) => (
-          <ArticleCard key={article.id} article={article} autoMarkRead={autoMarkRead} />
-        ))}
-      </div>
-    );
-  }
-
-  // Empty state
+  // All other views (list, compact, flat topics fallback) — flat list
   return (
-    <EmptyState
-      title={emptyMessage || "No articles yet"}
-      description="Refresh your feeds to fetch the latest articles."
-    />
+    <ul className="article-list">
+      {all.map(a => <ArticleCard key={a.id} article={a} autoMarkRead={autoMarkRead} />)}
+    </ul>
   );
 }

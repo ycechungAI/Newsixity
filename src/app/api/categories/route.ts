@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCategories, getArticleCountByCategory } from "@/lib/db/queries";
+import { internalServerError } from "@/lib/server/api-response";
 
 export async function GET() {
   try {
@@ -23,7 +24,6 @@ export async function GET() {
 
     return NextResponse.json(result);
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Categories GET error", e);
   }
 }

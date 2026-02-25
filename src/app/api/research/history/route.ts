@@ -1,25 +1,30 @@
 import { NextResponse } from "next/server";
 import { getAllArticleResearch, deleteArticleResearch } from "@/lib/db/queries";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { internalServerError, validationError } from "@/lib/server/api-response";
+
+const ResearchHistoryGetQuerySchema = z.object({
+  articleId: z.coerce.number().int().positive(),
+});
+
+const ResearchHistoryDeleteQuerySchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
 
 export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "research-history-get",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const articleIdStr = searchParams.get("articleId");
-
-    if (!articleIdStr) {
-      return NextResponse.json(
-        { error: "articleId is required" },
-        { status: 400 }
-      );
-    }
-
-    const articleId = parseInt(articleIdStr, 10);
-    if (isNaN(articleId)) {
-      return NextResponse.json(
-        { error: "Invalid articleId" },
-        { status: 400 }
-      );
-    }
+    const { articleId } = ResearchHistoryGetQuerySchema.parse({
+      articleId: searchParams.get("articleId"),
+    });
 
     // Get all research for this article
     const history = getAllArticleResearch(articleId);
@@ -34,31 +39,26 @@ export async function GET(request: Request) {
       })),
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Research history error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Research history GET error", e);
   }
 }
 
 export async function DELETE(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "research-history-delete",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const researchIdStr = searchParams.get("id");
-
-    if (!researchIdStr) {
-      return NextResponse.json(
-        { error: "Research ID is required" },
-        { status: 400 }
-      );
-    }
-
-    const researchId = parseInt(researchIdStr, 10);
-    if (isNaN(researchId)) {
-      return NextResponse.json(
-        { error: "Invalid research ID" },
-        { status: 400 }
-      );
-    }
+    const { id: researchId } = ResearchHistoryDeleteQuerySchema.parse({
+      id: searchParams.get("id"),
+    });
 
     // Delete the research item
     deleteArticleResearch(researchId);
@@ -68,8 +68,9 @@ export async function DELETE(request: Request) {
       message: "Research deleted successfully",
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Delete research error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Research history DELETE error", e);
   }
 }

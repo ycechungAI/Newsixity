@@ -6,28 +6,36 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "hooks:install": "sh scripts/install-hooks.sh",
+    "test:basic": "node --test --experimental-strip-types \"tests/basic/**/*.test.ts\"",
+    "test:security": "node --import ./tests/setup/loader.mjs --test --experimental-strip-types \"tests/security/**/*.test.ts\"",
+    "test:db": "node --test --experimental-strip-types \"tests/database/**/*.test.ts\"",
+    "tests": "npm run lint && npm run test:basic && npm run test:security && npm run test:db",
+    "audit": "npm audit --audit-level=moderate",
+    "audit:prod": "npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "next": "16.1.6",
     "ollama": "^0.6.3",
     "playwright-core": "^1.58.2",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "rss-parser": "^3.13.0",
-    "yahoo-finance2": "^3.13.0",
+    "yahoo-finance2": "^3.13.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.2.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
-    "@types/react": "^19",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "^9.39.3",
     "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.2.1",
     "typescript": "^5"
   }
 }

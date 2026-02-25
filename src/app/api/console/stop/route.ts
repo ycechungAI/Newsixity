@@ -1,26 +1,41 @@
 import { NextResponse } from 'next/server';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { internalServerError } from "@/lib/server/api-response";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // POST /api/console/stop
 // Stops Ollama and Next.js dev servers
-export async function POST() {
+export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "console-stop",
+    limit: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
-    // Execute the stop script
-    const { stdout, stderr } = await execAsync('pkill -f "next dev"; pkill -x "ollama"');
+    const [nextResult, ollamaResult] = await Promise.allSettled([
+      execFileAsync("pkill", ["-f", "next dev"]),
+      execFileAsync("pkill", ["-x", "ollama"]),
+    ]);
+
+    const output: string[] = [];
+    if (nextResult.status === "fulfilled") {
+      output.push(nextResult.value.stdout.trim());
+    }
+    if (ollamaResult.status === "fulfilled") {
+      output.push(ollamaResult.value.stdout.trim());
+    }
 
     return NextResponse.json({
       success: true,
       message: 'Servers stopped successfully',
-      output: stdout || stderr || 'Servers stopped',
+      output: output.filter(Boolean).join("\n") || 'Servers stopped',
     });
   } catch (error) {
-    // pkill returns exit code 1 if no processes found, which is fine
-    return NextResponse.json({
-      success: true,
-      message: 'Servers stopped (some may not have been running)',
-    });
+    return internalServerError("Console stop POST error", error);
   }
 }

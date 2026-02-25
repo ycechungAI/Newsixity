@@ -10,21 +10,28 @@ import {
 } from "@/lib/db/queries";
 import { conductResearch } from "@/lib/research/orchestrator";
 import { OllamaUnavailableError } from "@/types";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { z } from "zod";
+import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
+import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
+
+const ResearchRequestSchema = z.object({
+  articleId: z.number().int().positive(),
+  question: z.string().trim().min(1).max(500),
+});
 
 export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const { articleId, question } = body as {
-      articleId?: number;
-      question?: string;
-    };
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "research",
+    limit: 30,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
 
-    if (!articleId || !question?.trim()) {
-      return NextResponse.json(
-        { error: "articleId and question are required" },
-        { status: 400 }
-      );
-    }
+  try {
+    const { articleId, question } = await parseJsonBody(request, ResearchRequestSchema);
+
+    const normalizedQuestion = question.trim();
 
     const article = getArticleById(articleId);
     if (!article) {
@@ -35,7 +42,7 @@ export async function POST(request: Request) {
     }
 
     // Check cache first (cached results don't count against quota)
-    const cached = getArticleResearch(articleId, question.trim());
+    const cached = getArticleResearch(articleId, normalizedQuestion);
     if (cached) {
       return NextResponse.json({
         answer: cached.answer,
@@ -63,7 +70,7 @@ export async function POST(request: Request) {
     const { answer, sources } = await conductResearch(
       article.title,
       article.content,
-      question.trim(),
+      normalizedQuestion,
       ollamaModel,
       apiKey
     );
@@ -75,7 +82,7 @@ export async function POST(request: Request) {
     // Cache result
     saveArticleResearch(
       articleId,
-      question.trim(),
+      normalizedQuestion,
       answer,
       sources,
       ollamaModel
@@ -88,14 +95,19 @@ export async function POST(request: Request) {
       quotaRemaining: getRemainingQuota(),
     });
   } catch (e) {
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
+
     if (e instanceof OllamaUnavailableError) {
       return NextResponse.json(
         { error: "Ollama is not available. Make sure Ollama is running locally." },
         { status: 503 }
       );
     }
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Research error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Research POST error", e);
   }
 }

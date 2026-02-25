@@ -2,8 +2,9 @@ import Parser from "rss-parser";
 import { ParsedArticle } from "@/types";
 import { getDb } from "@/lib/db";
 
-type CustomFeed = {};
+type CustomFeed = Record<string, never>;
 type CustomItem = {
+  author?: string;
   "media:content"?: { $: { url?: string } };
   "media:thumbnail"?: { $: { url?: string } };
 };
@@ -49,7 +50,7 @@ export async function fetchFeed(url: string): Promise<ParsedArticle[]> {
 
     const link = item.link || "";
 
-    const author = item.creator || (item as any).author || null;
+    const author = item.creator || item.author || null;
 
     const publishedAt = new Date(
       item.pubDate || item.isoDate || Date.now()

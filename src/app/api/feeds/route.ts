@@ -4,30 +4,52 @@ import {
   getArticleGroupsByCategory,
   searchArticles,
 } from "@/lib/db/queries";
+import { z } from "zod";
+import { internalServerError, validationError } from "@/lib/server/api-response";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+
+const FeedsQuerySchema = z.object({
+  category: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).max(10000).default(0),
+  grouped: z.enum(["true", "false"]).optional(),
+  search: z.string().trim().min(1).max(250).optional(),
+});
 
 export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "feeds-get",
+    limit: 180,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const category = searchParams.get("category") || undefined;
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
-    const offset = parseInt(searchParams.get("offset") || "0", 10);
-    const grouped = searchParams.get("grouped") === "true";
-    const search = searchParams.get("search") || undefined;
+    const { category, limit, offset, grouped, search } = FeedsQuerySchema.parse({
+      category: searchParams.get("category") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      offset: searchParams.get("offset") ?? undefined,
+      grouped: searchParams.get("grouped") ?? undefined,
+      search: searchParams.get("search") ?? undefined,
+    });
 
     if (search) {
       const results = searchArticles(search, { category, limit });
       return NextResponse.json({ articles: results });
     }
 
-    if (grouped) {
-      const groups = getArticleGroupsByCategory(category ?? null, limit);
+    if (grouped === "true") {
+      const groups = getArticleGroupsByCategory(category ?? null, { limit });
       return NextResponse.json({ groups });
     }
 
     const articles = getArticlesByCategory(category ?? null, { limit, offset });
     return NextResponse.json({ articles });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Feeds GET error", e);
   }
 }

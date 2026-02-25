@@ -8,11 +8,13 @@ export interface Category {
 export interface Feed {
   id: number;
   categoryId: number;
+  categorySlug?: string | null;
   name: string;
   url: string;
   enabled: boolean;
   lastFetchedAt: string | null;
   lastError: string | null;
+  sourceWeight: number;
 }
 
 export interface Article {
@@ -33,6 +35,8 @@ export interface Article {
   isSaved: boolean;
   groupId: number | null;
   fetchedAt: string;
+  relevanceScore: number;
+  isPromoted: boolean;
 }
 
 export interface ArticleGroup {

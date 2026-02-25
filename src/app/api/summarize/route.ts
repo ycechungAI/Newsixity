@@ -7,16 +7,31 @@ import {
 import { summarizeArticle } from "@/lib/ollama/client";
 import { backgroundSummarize } from "@/lib/ollama/background";
 import { OllamaUnavailableError } from "@/types";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { z } from "zod";
+import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
+import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
+
+const SummarizeRequestSchema = z
+  .object({
+    articleId: z.number().int().positive().optional(),
+    category: z.string().trim().min(1).max(100).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    background: z.boolean().optional(),
+  })
+  .strict();
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "summarize",
+    limit: 20,
+    windowMs: 5 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
-    const body = await request.json();
-    const { articleId, category, limit = 10, background } = body as {
-      articleId?: number;
-      category?: string;
-      limit?: number;
-      background?: boolean;
-    };
+    const { articleId, category, limit = 10, background } =
+      await parseJsonBody(request, SummarizeRequestSchema);
 
     // Trigger the full background summarizer (with content fetching)
     if (background) {
@@ -56,7 +71,7 @@ export async function POST(request: Request) {
       }
 
       const summary = await summarizeArticle(article.title, textToSummarize);
-      updateArticleSummary(articleId, summary, "llama3.2");
+      updateArticleSummary(articleId, summary, "qwen3-coder-next:cloud");
 
       return NextResponse.json({ summary });
     }
@@ -87,20 +102,29 @@ export async function POST(request: Request) {
             { status: 503 }
           );
         }
-        const message = e instanceof Error ? e.message : String(e);
-        errors.push(`Article ${article.id}: ${message}`);
+        const requestId = `${Date.now()}-${article.id}`;
+        console.error(
+          `[Newsixity] Summarize item error [${requestId}]`,
+          e instanceof Error ? e.message : String(e)
+        );
+        errors.push(`Article ${article.id}: failed to summarize`);
       }
     }
 
     return NextResponse.json({ summarized, errors });
   } catch (e) {
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
     if (e instanceof OllamaUnavailableError) {
       return NextResponse.json(
         { error: "Ollama is not available" },
         { status: 503 }
       );
     }
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Summarize POST error", e);
   }
 }

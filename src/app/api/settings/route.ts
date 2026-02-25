@@ -1,7 +1,38 @@
 import { NextResponse } from "next/server";
-import { getSetting, setSetting, getAllSettings } from "@/lib/db/queries";
+import {
+  setSetting,
+  getAllSettings,
+  SettingsEncryptionRequiredError,
+} from "@/lib/db/queries";
+import { z } from "zod";
+import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
+import { parseHttpUrl } from "@/lib/utils/url";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
 
-export async function GET() {
+const SettingsUpdateSchema = z
+  .object({
+    brave_search_api_key: z.string().max(2048).optional(),
+    ollama_model: z.string().trim().min(1).max(128).optional(),
+    ollama_host: z
+      .string()
+      .trim()
+      .max(512)
+      .optional()
+      .refine((value) => value === undefined || parseHttpUrl(value) !== null, {
+        message: "ollama_host must be a valid http/https URL",
+      }),
+  })
+  .strict();
+
+export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "settings-get",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const settings = getAllSettings();
 
@@ -23,20 +54,21 @@ export async function GET() {
       },
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Settings GET error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Settings GET error", e);
   }
 }
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "settings-post",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
-    const body = await request.json();
-    const { brave_search_api_key, ollama_model, ollama_host } = body as {
-      brave_search_api_key?: string;
-      ollama_model?: string;
-      ollama_host?: string;
-    };
+    const { brave_search_api_key, ollama_model, ollama_host } =
+      await parseJsonBody(request, SettingsUpdateSchema);
 
     // Save settings (only if provided)
     if (brave_search_api_key !== undefined) {
@@ -59,8 +91,15 @@ export async function POST(request: Request) {
       message: "Settings saved successfully",
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Settings POST error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
+    if (e instanceof SettingsEncryptionRequiredError) {
+      return badRequest(e.message);
+    }
+    return internalServerError("Settings POST error", e);
   }
 }

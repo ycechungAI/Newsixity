@@ -9,27 +9,30 @@ import {
   CHART_CACHE_HOURS_DAILY,
   CHART_CACHE_HOURS_INTRADAY,
 } from "@/lib/finance/constants";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { internalServerError, validationError } from "@/lib/server/api-response";
+
+const FinanceChartQuerySchema = z.object({
+  symbol: z.string().trim().min(1).max(15).regex(/^[A-Z0-9.^-]+$/i, "Invalid symbol"),
+  timeframe: z.enum(["1d", "5d", "1mo", "3mo", "1y"]).default("1mo"),
+});
 
 export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-chart",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const symbol = searchParams.get("symbol");
-    const timeframe = searchParams.get("timeframe") || "1mo";
-
-    if (!symbol) {
-      return NextResponse.json(
-        { error: "Symbol parameter is required" },
-        { status: 400 }
-      );
-    }
-
-    const validTimeframes = ["1d", "5d", "1mo", "3mo", "1y"];
-    if (!validTimeframes.includes(timeframe)) {
-      return NextResponse.json(
-        { error: "Invalid timeframe. Must be one of: 1d, 5d, 1mo, 3mo, 1y" },
-        { status: 400 }
-      );
-    }
+    const { symbol, timeframe } = FinanceChartQuerySchema.parse({
+      symbol: searchParams.get("symbol") ?? undefined,
+      timeframe: searchParams.get("timeframe") ?? undefined,
+    });
+    const normalizedSymbol = symbol.toUpperCase();
 
     // Clean expired cache entries (opportunistic cleanup)
     try {
@@ -39,10 +42,10 @@ export async function GET(request: Request) {
     }
 
     // Check cache first
-    const cached = getCachedChart(symbol.toUpperCase(), timeframe);
+    const cached = getCachedChart(normalizedSymbol, timeframe);
     if (cached) {
       return NextResponse.json({
-        symbol: symbol.toUpperCase(),
+        symbol: normalizedSymbol,
         timeframe,
         data: cached.data,
         cached: true,
@@ -51,7 +54,7 @@ export async function GET(request: Request) {
 
     // Calculate date range based on timeframe
     const period2 = new Date();
-    let period1 = new Date();
+    const period1 = new Date();
     let interval: '1d' | '1h' | '5m' = '1d';
     let cacheTTL = CHART_CACHE_HOURS_DAILY;
 
@@ -79,24 +82,25 @@ export async function GET(request: Request) {
 
     // Fetch from Yahoo Finance
     const data = await fetchYahooChart(
-      symbol.toUpperCase(),
+      normalizedSymbol,
       period1,
       period2,
       interval
     );
 
     // Cache the result
-    setCachedChart(symbol.toUpperCase(), timeframe, data, cacheTTL);
+    setCachedChart(normalizedSymbol, timeframe, data, cacheTTL);
 
     return NextResponse.json({
-      symbol: symbol.toUpperCase(),
+      symbol: normalizedSymbol,
       timeframe,
       data,
       cached: false,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Chart fetch error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Finance chart GET error", e);
   }
 }

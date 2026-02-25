@@ -9,8 +9,38 @@ import {
 import { fetchYahooQuotes } from "@/lib/finance/yahoo";
 import { QUOTE_CACHE_MINUTES } from "@/lib/finance/constants";
 import { setCachedQuote } from "@/lib/db/queries";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
+import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
 
-export async function GET() {
+const WatchlistCreateSchema = z
+  .object({
+    symbol: z
+      .string()
+      .trim()
+      .min(1)
+      .max(15)
+      .regex(/^[A-Z0-9.^-]+$/i, "Invalid symbol"),
+    name: z.string().trim().min(1).max(200),
+    exchange: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
+
+const WatchlistDeleteSchema = z
+  .object({
+    id: z.number().int().positive(),
+  })
+  .strict();
+
+export async function GET(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-watchlist-get",
+    limit: 120,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const watchlist = getWatchlist();
 
@@ -31,7 +61,7 @@ export async function GET() {
       freshQuotes = await fetchYahooQuotes(uncachedSymbols);
 
       // Cache fresh quotes
-      for (const [symbol, quote] of freshQuotes) {
+      for (const [, quote] of freshQuotes) {
         setCachedQuote(quote, QUOTE_CACHE_MINUTES);
       }
     }
@@ -49,23 +79,20 @@ export async function GET() {
 
     return NextResponse.json({ watchlist: watchlistWithQuotes });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Watchlist fetch error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalServerError("Watchlist GET error", e);
   }
 }
 
 export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const { symbol, name, exchange } = body;
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-watchlist-post",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
 
-    if (!symbol || !name) {
-      return NextResponse.json(
-        { error: "Symbol and name are required" },
-        { status: 400 }
-      );
-    }
+  try {
+    const { symbol, name, exchange } = await parseJsonBody(request, WatchlistCreateSchema);
 
     const normalizedSymbol = symbol.toUpperCase().trim();
 
@@ -86,23 +113,26 @@ export async function POST(request: Request) {
       message: `${normalizedSymbol} added to watchlist`,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Add to watchlist error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
+    return internalServerError("Watchlist POST error", e);
   }
 }
 
 export async function DELETE(request: Request) {
-  try {
-    const body = await request.json();
-    const { id } = body;
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-watchlist-delete",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
 
-    if (!id) {
-      return NextResponse.json(
-        { error: "ID is required" },
-        { status: 400 }
-      );
-    }
+  try {
+    const { id } = await parseJsonBody(request, WatchlistDeleteSchema);
 
     removeFromWatchlist(id);
 
@@ -111,8 +141,12 @@ export async function DELETE(request: Request) {
       message: "Stock removed from watchlist",
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error("[Newsixity] Remove from watchlist error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
+    return internalServerError("Watchlist DELETE error", e);
   }
 }

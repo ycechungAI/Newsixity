@@ -1,3 +1,5 @@
+import type { Article } from "@/types";
+
 const globalForScheduler = globalThis as unknown as {
   __newsixityScheduler: NodeJS.Timeout | undefined;
   __newsixitySchedulerStarted: boolean | undefined;
@@ -9,10 +11,14 @@ async function refreshAllFeeds(): Promise<void> {
     const { seedAllFeeds } = await import("@/lib/rss/feeds");
     const { fetchAllFeeds } = await import("@/lib/rss/parser");
     const { hashTitle } = await import("@/lib/dedup/similarity");
-    const { upsertArticle, getArticleByTitleHash, getArticleById } =
+    const {
+      upsertArticle,
+      getArticleByTitleHash,
+      getArticleById,
+      getFeedCategorySlug,
+    } =
       await import("@/lib/db/queries");
     const { groupArticles } = await import("@/lib/dedup/grouping");
-    const { getDb } = await import("@/lib/db");
 
     seedAllFeeds();
     const feedResults = await fetchAllFeeds();
@@ -23,15 +29,8 @@ async function refreshAllFeeds(): Promise<void> {
       if (feedResult.error) continue;
 
       // Get category slug for this feed
-      const db = getDb();
-      const feedCat = db
-        .prepare(
-          `SELECT c.slug FROM feeds f JOIN categories c ON f.category_id = c.id WHERE f.id = ?`
-        )
-        .get(feedResult.feedId) as { slug: string } | undefined;
-
-      if (!feedCat) continue;
-      const categorySlug = feedCat.slug;
+      const categorySlug = getFeedCategorySlug(feedResult.feedId);
+      if (!categorySlug) continue;
 
       for (const article of feedResult.articles) {
         const titleHash = hashTitle(article.title);
@@ -54,7 +53,7 @@ async function refreshAllFeeds(): Promise<void> {
     for (const [slug, articleIds] of Object.entries(newArticlesByCategory)) {
       const articles = articleIds
         .map((id) => getArticleById(id))
-        .filter(Boolean) as any[];
+        .filter((article): article is Article => article !== undefined);
 
       if (articles.length > 0) {
         groupArticles(articles, slug);
@@ -62,6 +61,15 @@ async function refreshAllFeeds(): Promise<void> {
     }
 
     console.log("[Newsixity] Feed refresh complete");
+
+    // Score and promote articles for capped categories
+    try {
+      const { scoreAndPromoteAll } = await import("@/lib/ranking/promoter");
+      scoreAndPromoteAll();
+      console.log("[Newsixity] Article scoring and promotion complete");
+    } catch (e) {
+      console.warn("[Newsixity] Scoring/promotion error:", e);
+    }
 
     // Background-summarize prioritized articles (saved > read > recent)
     try {

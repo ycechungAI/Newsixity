@@ -3,14 +3,32 @@ import { getHeatmapSnapshot, saveHeatmapSnapshot, getAvailableHeatmapDates } fro
 import { fetchYahooQuotes } from '@/lib/finance/yahoo';
 import { SP500_STOCKS } from '@/lib/finance/sp500';
 import type { HeatmapStock } from '@/lib/finance/types';
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { internalServerError, validationError } from "@/lib/server/api-response";
+
+const HeatmapQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD").optional(),
+  list: z.enum(["true", "false"]).optional(),
+});
 
 // GET /api/finance/heatmap?date=YYYY-MM-DD
 // Returns heatmap data for a specific date (defaults to today)
 export async function GET(request: NextRequest) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "finance-heatmap",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const { searchParams } = new URL(request.url);
-    const requestedDate = searchParams.get('date');
-    const listDates = searchParams.get('list') === 'true';
+    const { date: requestedDate, list } = HeatmapQuerySchema.parse({
+      date: searchParams.get("date") ?? undefined,
+      list: searchParams.get("list") ?? undefined,
+    });
+    const listDates = list === "true";
 
     // If list=true, return available dates
     if (listDates) {
@@ -70,11 +88,10 @@ export async function GET(request: NextRequest) {
       cached: false,
     });
   } catch (error) {
-    console.error('[Newsixity] Heatmap API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch heatmap data' },
-      { status: 500 }
-    );
+    if (error instanceof z.ZodError) {
+      return validationError(error);
+    }
+    return internalServerError("Finance heatmap GET error", error);
   }
 }
 

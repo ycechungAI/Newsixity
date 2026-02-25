@@ -1,56 +1,44 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 
-interface OllamaModel {
-  name: string;
-  size: string | number;
-  modified?: string;
-}
-
-interface SuggestedModel {
-  name: string;
-  size: string;
-  description: string;
-  recommended: boolean;
-  installed: boolean;
+interface OllamaModel   { name: string; size: string | number; modified?: string }
+interface SuggestedModel { name: string; size: string; description: string; recommended: boolean; installed: boolean }
+interface Feed {
+  id: number; categoryId: number; name: string; url: string; enabled: boolean;
+  lastFetchedAt: string | null; lastError: string | null; sourceWeight: number; categorySlug?: string;
 }
 
 export default function SettingsPage() {
-  const [apiKey, setApiKey] = useState("");
+  const [apiKey,      setApiKey]      = useState("");
   const [ollamaModel, setOllamaModel] = useState("llama3.2");
-  const [ollamaHost, setOllamaHost] = useState("http://localhost:11434");
+  const [ollamaHost,  setOllamaHost]  = useState("http://localhost:11434");
 
-  const [installedModels, setInstalledModels] = useState<OllamaModel[]>([]);
-  const [suggestedModels, setSuggestedModels] = useState<SuggestedModel[]>([]);
-  const [ollamaRunning, setOllamaRunning] = useState(false);
+  const [installedModels,  setInstalledModels]  = useState<OllamaModel[]>([]);
+  const [suggestedModels,  setSuggestedModels]  = useState<SuggestedModel[]>([]);
+  const [ollamaRunning,    setOllamaRunning]    = useState(false);
+
+  const [feeds,       setFeeds]       = useState<Feed[]>([]);
+  const [feedWeights, setFeedWeights] = useState<Record<number, number>>({});
+  const [feedsOpen,   setFeedsOpen]   = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [saving,  setSaving]  = useState(false);
+  const [msg,     setMsg]     = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Load settings
-  useEffect(() => {
-    loadSettings();
-    loadOllamaModels();
-  }, []);
+  useEffect(() => { loadSettings(); loadOllamaModels(); loadFeeds(); }, []);
 
-  const loadSettings = async () => {
-    try {
-      const res = await fetch("/api/settings");
-      if (res.ok) {
-        const data = await res.json();
-        setApiKey(data.settings.brave_search_api_key || "");
-        setOllamaModel(data.settings.ollama_model || "llama3.2");
-        setOllamaHost(data.settings.ollama_host || "http://localhost:11434");
-      }
-    } catch (e) {
-      console.error("Failed to load settings:", e);
+  async function loadSettings() {
+    const res = await fetch("/api/settings");
+    if (res.ok) {
+      const { settings } = await res.json();
+      setApiKey(settings.brave_search_api_key || "");
+      setOllamaModel(settings.ollama_model || "llama3.2");
+      setOllamaHost(settings.ollama_host || "http://localhost:11434");
     }
-  };
+  }
 
-  const loadOllamaModels = async () => {
+  async function loadOllamaModels() {
     setLoading(true);
     try {
       const res = await fetch("/api/ollama/models");
@@ -60,237 +48,202 @@ export default function SettingsPage() {
         setInstalledModels(data.installed || []);
         setSuggestedModels(data.suggestions || []);
       }
-    } catch (e) {
-      console.error("Failed to load Ollama models:", e);
-    } finally {
-      setLoading(false);
+    } finally { setLoading(false); }
+  }
+
+  async function loadFeeds() {
+    const res = await fetch("/api/feeds/weights");
+    if (res.ok) {
+      const data = await res.json();
+      setFeeds(data.feeds || []);
+      const w: Record<number, number> = {};
+      (data.feeds || []).forEach((f: Feed) => { w[f.id] = f.sourceWeight });
+      setFeedWeights(w);
     }
-  };
+  }
 
-  const handleSave = async () => {
-    setSaving(true);
-    setMessage(null);
-
+  async function save() {
+    setSaving(true); setMsg(null);
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brave_search_api_key: apiKey,
-          ollama_model: ollamaModel,
-          ollama_host: ollamaHost,
-        }),
+        body: JSON.stringify({ brave_search_api_key: apiKey, ollama_model: ollamaModel, ollama_host: ollamaHost }),
       });
-
       if (res.ok) {
-        setMessage({ type: "success", text: "Settings saved successfully!" });
-        // Reload to get masked key
+        setMsg({ ok: true, text: "Settings saved." });
         await loadSettings();
       } else {
-        const data = await res.json();
-        setMessage({ type: "error", text: data.error || "Failed to save settings" });
+        const d = await res.json();
+        setMsg({ ok: false, text: d.error || "Failed to save." });
       }
-    } catch (e) {
-      setMessage({ type: "error", text: "Network error. Please try again." });
-    } finally {
-      setSaving(false);
-    }
-  };
+    } catch { setMsg({ ok: false, text: "Network error." }); }
+    finally { setSaving(false); }
+  }
+
+  async function updateFeedWeight(feedId: number, weight: number) {
+    const res = await fetch("/api/feeds/weights", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feedId, weight }),
+    });
+    if (res.ok) setFeedWeights(w => ({ ...w, [feedId]: weight }));
+  }
+
+  const filteredFeeds = feeds.filter(f =>
+    f.categorySlug && ["finance", "gaming", "sports", "world-news"].includes(f.categorySlug)
+  );
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
-      {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-          <Link
-            href="/"
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-          </Link>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Settings</h1>
-        </div>
-      </header>
+    <div className="settings-page page">
+      <h1>Settings</h1>
 
-      <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        {/* Success/Error Message */}
-        {message && (
-          <div
-            className={`p-4 rounded-lg border ${
-              message.type === "success"
-                ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800"
-                : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800"
-            }`}
-          >
-            {message.text}
-          </div>
-        )}
+      {msg && <div className={`settings-msg ${msg.ok ? "ok" : "err"}`}>{msg.text}</div>}
 
-        {/* Brave Search API Key */}
-        <section className="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
-            Brave Search API Key
-          </h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Required for Deep Research feature. Get your free API key at{" "}
-            <a
-              href="https://brave.com/search/api/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sky-600 dark:text-sky-400 hover:underline"
-            >
+      {/* Brave Search API Key */}
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <div className="settings-section-title">Brave Search API Key</div>
+          <div className="settings-section-sub">
+            Required for Deep Research. Get a free key at{" "}
+            <a href="https://brave.com/search/api/" target="_blank" rel="noopener noreferrer">
               brave.com/search/api
             </a>
-          </p>
-
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Paste your API key here"
-            className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
-          />
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            🔒 Once saved, the key is stored securely and cannot be viewed or copied
-          </p>
-        </section>
-
-        {/* Ollama Configuration */}
-        <section className="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Ollama Configuration
-              </h2>
-              <div className="flex items-center gap-2 mt-1">
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    ollamaRunning ? "bg-green-500" : "bg-red-500"
-                  }`}
-                />
-                <span className="text-sm text-gray-600 dark:text-gray-400">
-                  {ollamaRunning ? "Ollama is running" : "Ollama is offline"}
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={loadOllamaModels}
-              disabled={loading}
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
-            >
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
           </div>
+        </div>
+        <div className="settings-body">
+          <div className="settings-row">
+            <label>API Key</label>
+            <input
+              type="password"
+              className="settings-input"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder="Paste your key here"
+            />
+          </div>
+          <div style={{ fontSize: 10, color: "var(--subtle)" }}>🔒 Stored securely, cannot be viewed once saved.</div>
+        </div>
+      </div>
 
-          {/* Host */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Ollama Host
-            </label>
+      {/* Ollama */}
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span className="settings-section-title">Ollama Configuration</span>
+            <span className="ollama-status">
+              <span className={ollamaRunning ? "dot-green" : "dot-red"} />
+              {ollamaRunning ? "Running" : "Offline"}
+            </span>
+          </div>
+          <div className="settings-section-sub">AI summarization & research</div>
+        </div>
+        <div className="settings-body">
+          <div className="settings-row">
+            <label>Host</label>
             <input
               type="text"
+              className="settings-input"
               value={ollamaHost}
-              onChange={(e) => setOllamaHost(e.target.value)}
+              onChange={e => setOllamaHost(e.target.value)}
               placeholder="http://localhost:11434"
-              className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
             />
           </div>
 
-          {/* Model Selection */}
-          {ollamaRunning && installedModels.length > 0 ? (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Selected Model
-              </label>
-              <select
-                value={ollamaModel}
-                onChange={(e) => setOllamaModel(e.target.value)}
-                className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
-              >
-                {installedModels.map((model) => (
-                  <option key={model.name} value={model.name}>
-                    {model.name}{" "}
-                    {typeof model.size === "number"
-                      ? `(${(model.size / 1e9).toFixed(1)}GB)`
-                      : `(${model.size})`}
+          {ollamaRunning && installedModels.length > 0 && (
+            <div className="settings-row">
+              <label>Model</label>
+              <select className="settings-select" value={ollamaModel} onChange={e => setOllamaModel(e.target.value)}>
+                {installedModels.map(m => (
+                  <option key={m.name} value={m.name}>
+                    {m.name} ({typeof m.size === "number" ? `${(m.size / 1e9).toFixed(1)}GB` : m.size})
                   </option>
                 ))}
               </select>
             </div>
-          ) : (
-            <div className="text-sm text-gray-600 dark:text-gray-400">
-              {ollamaRunning
-                ? "No models installed yet. See suggestions below."
-                : "Start Ollama to see installed models."}
+          )}
+
+          {!ollamaRunning && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
+              Start Ollama to see installed models.
             </div>
           )}
 
-          {/* Suggested Models */}
-          {suggestedModels.length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                Suggested Models
-              </h3>
-              <div className="space-y-2">
-                {suggestedModels.map((model) => (
-                  <div
-                    key={model.name}
-                    className={`p-3 rounded-lg border ${
-                      model.installed
-                        ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
-                        : "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900 dark:text-gray-100">
-                            {model.name}
-                          </span>
-                          {model.recommended && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400">
-                              Recommended
-                            </span>
-                          )}
-                          {model.installed && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                              ✓ Installed
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {model.description} • {model.size}
-                        </p>
-                      </div>
-                      {!model.installed && (
-                        <code className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-700 dark:text-gray-300">
-                          ollama pull {model.name}
-                        </code>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                💡 Run the command in your terminal to download a model
-              </p>
-            </div>
-          )}
-        </section>
-
-        {/* Save Button */}
-        <div className="flex justify-end">
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-6 py-2.5 font-medium rounded-lg bg-sky-500 text-white hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="tb-btn"
+            onClick={loadOllamaModels}
+            disabled={loading}
+            style={{ marginBottom: 8 }}
           >
-            {saving ? "Saving..." : "Save Settings"}
+            {loading ? "Refreshing…" : "↺ Refresh Ollama"}
           </button>
+
+          {suggestedModels.length > 0 && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 4 }}>
+                Suggested Models
+              </div>
+              <ul className="model-list">
+                {suggestedModels.map(m => (
+                  <li key={m.name} className="model-item">
+                    <span>
+                      <span className="model-name">{m.name}</span>
+                      {" "}
+                      {m.recommended && <span className="model-tag model-tag-blue">Recommended</span>}
+                      {m.installed   && <span className="model-tag model-tag-green">✓ Installed</span>}
+                      <br />
+                      <span style={{ fontSize: 10, color: "var(--subtle)" }}>{m.description} · {m.size}</span>
+                    </span>
+                    {!m.installed && (
+                      <span className="model-pull"><code>ollama pull {m.name}</code></span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div style={{ fontSize: 10, color: "var(--subtle)", marginTop: 4 }}>
+                Run the command in your terminal to download a model.
+              </div>
+            </>
+          )}
         </div>
-      </main>
+      </div>
+
+      {/* Feed Rankings */}
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <div className="settings-section-title">Feed Rankings</div>
+          <div className="settings-section-sub">Higher weight → more likely to appear in top articles</div>
+        </div>
+        <div className="settings-body">
+          <button className="tb-btn" onClick={() => setFeedsOpen(o => !o)} style={{ marginBottom: 6 }}>
+            {feedsOpen ? "▲ Hide feeds" : "▼ Show feed weights"}
+          </button>
+          {feedsOpen && (
+            <div style={{ maxHeight: 300, overflowY: "auto" }}>
+              {filteredFeeds.map(f => (
+                <div key={f.id} className="feed-row">
+                  <span className="feed-name">{f.name}</span>
+                  <select
+                    className="feed-select"
+                    value={feedWeights[f.id] ?? 1.0}
+                    onChange={e => updateFeedWeight(f.id, parseFloat(e.target.value))}
+                  >
+                    <option value="0.5">Low (0.5×)</option>
+                    <option value="1.0">Normal (1.0×)</option>
+                    <option value="1.5">High (1.5×)</option>
+                    <option value="2.0">Essential (2.0×)</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Save */}
+      <button className="settings-save-btn" onClick={save} disabled={saving}>
+        {saving ? "Saving…" : "Save Settings"}
+      </button>
     </div>
   );
 }

@@ -3,14 +3,24 @@ import path from "path";
 import fs from "fs";
 import { initializeSchema } from "./schema";
 
-const DB_PATH = path.join(process.cwd(), "data", "newsixity.db");
+function resolveDbPath(): string {
+  const override = process.env.NEWSIXITY_DB_PATH?.trim();
+  if (!override) {
+    return path.join(process.cwd(), "data", "newsixity.db");
+  }
+
+  return path.isAbsolute(override)
+    ? override
+    : path.join(process.cwd(), override);
+}
 
 function createDb(): Database.Database {
-  const dir = path.dirname(DB_PATH);
+  const dbPath = resolveDbPath();
+  const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const db = new Database(DB_PATH);
+  const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initializeSchema(db);
@@ -26,4 +36,10 @@ export function getDb(): Database.Database {
     globalForDb.__newsixityDb = createDb();
   }
   return globalForDb.__newsixityDb;
+}
+
+export function closeDbConnection(): void {
+  if (!globalForDb.__newsixityDb) return;
+  globalForDb.__newsixityDb.close();
+  globalForDb.__newsixityDb = undefined;
 }

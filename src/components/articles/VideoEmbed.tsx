@@ -1,52 +1,72 @@
 "use client";
 
-import { extractVideoInfo } from "@/lib/utils/video";
+import { useState } from "react";
+import {
+  extractVideoInfo,
+  type PlaylistItem,
+  type PlaylistPagination,
+} from "@/lib/utils/video";
 
 interface VideoEmbedProps {
   url: string;
   title?: string;
   className?: string;
+  playlistItems?: PlaylistItem[];
+  playlistPagination?: PlaylistPagination;
 }
 
-export default function VideoEmbed({ url, title, className = "" }: VideoEmbedProps) {
+export default function VideoEmbed({ url, title, playlistItems }: VideoEmbedProps) {
   const videoInfo = extractVideoInfo(url);
+  const [currentEmbedUrl, setCurrentEmbedUrl] = useState(videoInfo?.embedUrl ?? "");
+  const [currentTitle, setCurrentTitle] = useState(title ?? "");
+  const [activeVideoId, setActiveVideoId] = useState(videoInfo?.videoId ?? "");
 
-  if (!videoInfo) {
-    return null;
-  }
+  if (!videoInfo) return null;
+
+  const isAnimex = videoInfo.type === "animex";
 
   return (
-    <div className={`space-y-4 ${className}`}>
-      <div className="relative w-full overflow-hidden rounded-lg bg-black">
-        {/* 16:9 aspect ratio */}
-        <div style={{ paddingBottom: "56.25%" }} className="relative">
+    <div>
+      {/* 16:9 embed container */}
+      <div className="card-video">
+        {isAnimex ? (
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "#1a0a2e", color: "#fff", fontSize: 12, textDecoration: "none" }}
+          >
+            ▶ Watch on Animex.one
+          </a>
+        ) : (
           <iframe
-            src={videoInfo.embedUrl}
-            title={title}
-            className="absolute top-0 left-0 w-full h-full border-0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            src={currentEmbedUrl}
+            title={currentTitle}
+            allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
             loading="lazy"
           />
-        </div>
+        )}
       </div>
 
-      {/* YouTube playlist below the video */}
-      {videoInfo.playlistEmbedUrl && videoInfo.playlistEmbedUrl !== videoInfo.embedUrl && (
-        <div>
-          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Playlist</h4>
-          <div className="relative w-full overflow-hidden rounded-lg bg-black">
-            <div style={{ paddingBottom: "56.25%" }} className="relative">
-              <iframe
-                src={videoInfo.playlistEmbedUrl}
-                title={title ? `${title} - Playlist` : "Playlist"}
-                className="absolute top-0 left-0 w-full h-full border-0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                loading="lazy"
-              />
-            </div>
-          </div>
+      {/* Playlist (article detail page only) */}
+      {playlistItems && playlistItems.length > 0 && (
+        <div className="vid-playlist">
+          <div className="vid-playlist-title">Playlist ({playlistItems.length} videos)</div>
+          <ol>
+            {playlistItems.map((item, i) => (
+              <li key={item.videoId}>
+                <span className="vid-playlist-num">{i + 1}.</span>
+                <button
+                  className={`vid-playlist-btn${activeVideoId === item.videoId ? " active" : ""}`}
+                  onClick={() => {
+                    setCurrentEmbedUrl(`https://www.youtube.com/embed/${item.videoId}`);
+                    setCurrentTitle(item.title);
+                    setActiveVideoId(item.videoId);
+                  }}
+                >
+                  {item.title}
+                </button>
+              </li>
+            ))}
+          </ol>
         </div>
       )}
     </div>

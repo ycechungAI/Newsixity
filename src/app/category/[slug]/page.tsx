@@ -7,7 +7,12 @@ import { RefreshButton } from "@/components/ui/RefreshButton";
 import AddLinkButton from "@/components/ui/AddLinkButton";
 import { notFound, redirect } from "next/navigation";
 
-type ViewMode = "topics" | "compact" | "sources" | "timeline" | "list";
+type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
+
+function getDefaultView(slug: string): ViewMode {
+  if (slug === "others") return "cards";
+  return "topics";
+}
 
 function getPerPage(viewMode: ViewMode) {
   if (viewMode === "list") return 200;
@@ -24,19 +29,18 @@ export default async function CategoryPage({
 }) {
   const { slug } = await params;
 
-  if (slug === "weather") {
-    redirect("/weather");
-  }
+  if (slug === "weather") redirect("/weather");
+  if (slug === "finance") redirect("/finance");
 
   const { view, page: pageParam } = await searchParams;
-  const viewMode: ViewMode = (view === "compact" || view === "sources" || view === "timeline" || view === "list") ? view : "topics";
+  const defaultView = getDefaultView(slug);
+  const validViews: ViewMode[] = ["topics", "cards", "compact", "sources", "timeline", "list"];
+  const viewMode: ViewMode = validViews.includes(view as ViewMode) ? (view as ViewMode) : defaultView;
   const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const perPage = getPerPage(viewMode);
 
   const category = getCategoryBySlug(slug);
-  if (!category) {
-    notFound();
-  }
+  if (!category) notFound();
 
   const counts = getArticleCountByCategory();
   const categoryCount = counts.find((c) => c.slug === slug);
@@ -44,45 +48,40 @@ export default async function CategoryPage({
   const categoryTotal = categoryCount?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(categoryTotal / perPage));
 
-  // Only fetch groups on page 1 in topics view
   let groups = null;
   if (viewMode === "topics" && currentPage === 1) {
-    groups = getArticleGroupsByCategory(slug, perPage);
+    groups = getArticleGroupsByCategory(slug, { limit: perPage, promotedOnly: false });
   }
 
-  // Fetch flat articles for other views, or as fallback
   let articles = null;
   if (viewMode !== "topics" || !groups || groups.length === 0) {
     articles = getArticlesByCategory(slug, {
       limit: perPage,
       offset: (currentPage - 1) * perPage,
+      promotedOnly: false,
     });
   }
 
   const hasContent = (articles && articles.length > 0) || (groups && groups.length > 0);
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="page">
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{category.name}</h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Latest articles in {category.name}
-          </p>
+          <div className="page-title">{category.name}</div>
+          <div className="page-sub">Latest in {category.name}</div>
         </div>
-        <div className="flex items-center gap-2">
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {slug === "others" && <AddLinkButton />}
           <RefreshButton />
         </div>
       </div>
 
-      <div className="mb-4 flex items-center justify-end">
-        <ViewModeToggle viewMode={viewMode} />
-      </div>
+      <ViewModeToggle viewMode={viewMode} searchParams={{ view }} />
 
       {hasContent ? (
         <>
-          <Pagination currentPage={currentPage} totalPages={totalPages} />
+          <Pagination currentPage={currentPage} totalPages={totalPages} searchParams={{ view }} />
           <ArticleListWithToolbar
             articles={articles ?? undefined}
             groups={groups && groups.length > 0 ? groups : undefined}

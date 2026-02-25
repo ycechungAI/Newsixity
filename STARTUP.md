@@ -23,6 +23,19 @@ Or use the **STOP** button in the Console page at http://localhost:3000/console
 
 ---
 
+## First-Time Setup
+
+After cloning the repository, run:
+```bash
+npm install
+npm run hooks:install   # installs the git pre-commit lint hook
+```
+
+See [README.md](./README.md) for full setup instructions including environment
+variables, Deep Research configuration, and the macOS auto-start agent.
+
+---
+
 ## Auto-Start on Login (macOS)
 
 The Launch Agent has been created at:
@@ -99,4 +112,5 @@ lsof -ti:3000 | xargs kill -9
 Access the Console at http://localhost:3000/console to:
 - View summarization queue
 - See system logs
+- Trigger a manual database backup
 - **STOP** all servers with one click

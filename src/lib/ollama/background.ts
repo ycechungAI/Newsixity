@@ -12,8 +12,7 @@ import { fetchArticleContent } from "@/lib/content/fetcher";
 import type { Article } from "@/types";
 import { OllamaUnavailableError } from "@/types";
 
-const DEFAULT_MODEL = "llama3.2";
-const BATCH_SIZE = 30;
+const DEFAULT_MODEL = "qwen3-coder-next:cloud";
 
 /**
  * Track whether a background batch is already running so we don't pile up.
@@ -39,9 +38,18 @@ async function summarizeOne(article: Article): Promise<boolean> {
     }
   }
 
-  if (!content || content.length <= 10) return false;
+  // If still no content after trying to fetch, mark as skipped to remove from queue
+  if (!content || content.length <= 10) {
+    updateArticleSummary(article.id, "[No content to summarize]", "skipped");
+    console.log(
+      `[Newsixity] Skipped article ${article.id} (no content): "${article.title.slice(0, 50)}..."`
+    );
+    return false;
+  }
 
+  console.log(`[Newsixity] Calling summarizeArticle for article ${article.id}...`);
   const summary = await summarizeArticle(article.title, content);
+  console.log(`[Newsixity] Got summary for article ${article.id}, updating DB...`);
   updateArticleSummary(article.id, summary, DEFAULT_MODEL);
 
   console.log(
@@ -75,7 +83,10 @@ async function processBatch(
         if (await summarizeOne(urgent[0])) count++;
       } catch (e) {
         if (e instanceof OllamaUnavailableError) throw e;
-        errors.push(`Article ${urgent[0].id}: ${e instanceof Error ? e.message : String(e)}`);
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        errors.push(`Article ${urgent[0].id}: ${errorMsg}`);
+        // Mark article as failed to prevent infinite loop
+        updateArticleSummary(urgent[0].id, `[Summarization failed: ${errorMsg.slice(0, 100)}]`, "error");
       }
     }
 
@@ -83,7 +94,11 @@ async function processBatch(
       if (await summarizeOne(article)) count++;
     } catch (e) {
       if (e instanceof OllamaUnavailableError) throw e;
-      errors.push(`Article ${article.id}: ${e instanceof Error ? e.message : String(e)}`);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[Newsixity] ERROR summarizing article ${article.id}: ${errorMsg}`);
+      errors.push(`Article ${article.id}: ${errorMsg}`);
+      // Mark article as failed to prevent infinite loop
+      updateArticleSummary(article.id, `[Summarization failed: ${errorMsg.slice(0, 100)}]`, "error");
     }
   }
 
@@ -111,6 +126,7 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
   }
 
   backgroundRunning = true;
+  const batchSize = Math.max(1, Math.min(100, limit));
   let summarized = 0;
   const errors: string[] = [];
 
@@ -121,13 +137,13 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
     }
 
     // --- Priority 1: Saved articles ---
-    const saved = getUnsummarizedSavedArticles(BATCH_SIZE);
+    const saved = getUnsummarizedSavedArticles(batchSize);
     if (saved.length > 0) {
       summarized += await processBatch(saved, "saved", errors);
     }
 
     // --- Priority 2: Recently fetched (new articles from latest refresh) ---
-    const recent = getRecentUnsummarizedArticles(20, BATCH_SIZE);
+    const recent = getRecentUnsummarizedArticles(20, batchSize);
     if (recent.length > 0) {
       // Filter out any we already summarized as saved
       const recentFiltered = recent.filter(
@@ -135,7 +151,7 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
       );
       if (recentFiltered.length > 0) {
         // Check for new saved articles first
-        const urgentSaved = getUnsummarizedSavedArticles(BATCH_SIZE);
+        const urgentSaved = getUnsummarizedSavedArticles(batchSize);
         if (urgentSaved.length > 0) {
           summarized += await processBatch(urgentSaved, "saved (urgent)", errors);
         }
@@ -151,26 +167,26 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
       moreWork = false;
 
       // Check for saved articles before each round
-      const urgentSaved = getUnsummarizedSavedArticles(BATCH_SIZE);
+      const urgentSaved = getUnsummarizedSavedArticles(batchSize);
       if (urgentSaved.length > 0) {
         summarized += await processBatch(urgentSaved, "saved (between rounds)", errors);
       }
 
       // Check for recently fetched articles (new refresh may have happened)
-      const freshRecent = getRecentUnsummarizedArticles(20, BATCH_SIZE);
+      const freshRecent = getRecentUnsummarizedArticles(20, batchSize);
       if (freshRecent.length > 0) {
         summarized += await processBatch(freshRecent, "recent (between rounds)", errors);
       }
 
       for (const slug of categoryPriority) {
-        const batch = getUnsummarizedByCategory(slug, BATCH_SIZE);
+        const batch = getUnsummarizedByCategory(slug, batchSize);
         if (batch.length === 0) continue;
 
         moreWork = true;
         summarized += await processBatch(batch, slug, errors);
 
         // After each category batch, check for saved articles again
-        const midSaved = getUnsummarizedSavedArticles(BATCH_SIZE);
+        const midSaved = getUnsummarizedSavedArticles(batchSize);
         if (midSaved.length > 0) {
           summarized += await processBatch(midSaved, "saved (mid-round)", errors);
         }
@@ -180,6 +196,9 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
     console.log(
       `[Newsixity] Background summarize done: ${summarized} summarized, ${errors.length} errors`
     );
+    if (errors.length > 0) {
+      console.error(`[Newsixity] Errors during summarization:`, errors);
+    }
   } catch (e) {
     if (e instanceof OllamaUnavailableError) {
       console.warn("[Newsixity] Ollama went offline, stopping background batch");

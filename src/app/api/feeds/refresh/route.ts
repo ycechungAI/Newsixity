@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
 import { seedAllFeeds } from "@/lib/rss/feeds";
 import { fetchAllFeeds } from "@/lib/rss/parser";
 import {
@@ -7,21 +6,34 @@ import {
   getArticleByTitleHash,
   getArticlesByCategory,
   getArticleById,
+  getFeedCategorySlug,
 } from "@/lib/db/queries";
 import { hashTitle, isDuplicate } from "@/lib/dedup/similarity";
 import { groupArticles } from "@/lib/dedup/grouping";
 import { backgroundSummarize } from "@/lib/ollama/background";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { z } from "zod";
+import { badRequest, validationError } from "@/lib/server/api-response";
+import { InvalidJsonError, parseOptionalJsonBody } from "@/lib/server/request";
 import type { Article, RefreshResult } from "@/types";
 
+const RefreshRequestSchema = z
+  .object({
+    category: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "feeds-refresh",
+    limit: 6,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
-    let category: string | undefined;
-    try {
-      const body = await request.json();
-      category = body.category;
-    } catch {
-      // Body might be empty, that's fine
-    }
+    const body = await parseOptionalJsonBody(request, RefreshRequestSchema);
+    const category = body?.category;
 
     // Ensure all default feeds exist in the database
     await seedAllFeeds();
@@ -35,6 +47,7 @@ export async function POST(request: Request) {
 
     // Track new articles per category for grouping
     const newArticlesByCategory = new Map<string, Article[]>();
+    const existingArticlesByCategory = new Map<string, Article[]>();
 
     for (const feedResult of feedResults) {
       if (feedResult.error) {
@@ -45,28 +58,23 @@ export async function POST(request: Request) {
       refreshed++;
 
       // Look up the category slug for this feed
-      const feedCategory = getDb()
-        .prepare(
-          `SELECT c.slug FROM feeds f JOIN categories c ON f.category_id = c.id WHERE f.id = ?`
-        )
-        .get(feedResult.feedId) as { slug: string } | undefined;
-
-      if (!feedCategory) {
+      const categorySlug = getFeedCategorySlug(feedResult.feedId);
+      if (!categorySlug) {
         errors.push(`Feed ${feedResult.feedUrl}: could not determine category`);
         continue;
       }
-
-      const categorySlug = feedCategory.slug;
 
       // If a category filter was provided, skip feeds not in that category
       if (category && categorySlug !== category) {
         continue;
       }
 
-      // Get existing articles in this category for fuzzy dedup
-      const existingArticles = getArticlesByCategory(categorySlug, {
-        limit: 200,
-      });
+      // Get existing articles in this category for fuzzy dedup (memoized per category).
+      let existingArticles = existingArticlesByCategory.get(categorySlug);
+      if (!existingArticles) {
+        existingArticles = getArticlesByCategory(categorySlug, { limit: 200 });
+        existingArticlesByCategory.set(categorySlug, existingArticles);
+      }
 
       for (const article of feedResult.articles) {
         const titleHash = hashTitle(article.title);
@@ -96,6 +104,7 @@ export async function POST(request: Request) {
           newArticles++;
           const inserted = getArticleById(insertedId);
           if (inserted) {
+            existingArticles.push(inserted);
             if (!newArticlesByCategory.has(categorySlug)) {
               newArticlesByCategory.set(categorySlug, []);
             }
@@ -109,11 +118,17 @@ export async function POST(request: Request) {
     for (const [slug, articles] of newArticlesByCategory) {
       try {
         groupArticles(articles, slug);
-      } catch (e) {
-        const message =
-          e instanceof Error ? e.message : String(e);
-        errors.push(`Grouping error for ${slug}: ${message}`);
+      } catch {
+        errors.push(`Grouping error for ${slug}`);
       }
+    }
+
+    // Score and promote articles for capped categories
+    try {
+      const { scoreAndPromoteAll } = await import("@/lib/ranking/promoter");
+      scoreAndPromoteAll();
+    } catch {
+      errors.push("Scoring/promotion error");
     }
 
     // Fire-and-forget background summarization after refresh
@@ -124,9 +139,23 @@ export async function POST(request: Request) {
     const result: RefreshResult = { refreshed, newArticles, errors };
     return NextResponse.json(result);
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    if (e instanceof InvalidJsonError) {
+      return badRequest("Invalid JSON payload");
+    }
+    const requestId = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    console.error(
+      `[Newsixity] Feeds refresh POST error [${requestId}]`,
+      e instanceof Error ? e.message : String(e)
+    );
     return NextResponse.json(
-      { refreshed: 0, newArticles: 0, errors: [message] },
+      {
+        refreshed: 0,
+        newArticles: 0,
+        errors: [`Internal server error (${requestId})`],
+      },
       { status: 500 }
     );
   }

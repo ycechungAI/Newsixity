@@ -1,4 +1,10 @@
-import { createHash } from "crypto";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "crypto";
 import { getDb } from "./index";
 import type {
   Category,
@@ -13,14 +19,18 @@ import type {
   WatchlistItem,
   StockQuote,
   CachedQuote,
-  CachedChart,
   ChartDataPoint,
 } from "@/lib/finance/types";
+import { stripHtml } from "@/lib/utils/sanitize";
+import { parseHttpUrl } from "@/lib/utils/url";
 
 // ---------------------------------------------------------------------------
 // Helper: map a raw DB row (snake_case) to an Article (camelCase)
 // ---------------------------------------------------------------------------
 function mapArticleRow(row: any): Article {
+  const rawLink = typeof row.link === "string" ? row.link.trim() : "";
+  const safeImageUrl = parseHttpUrl(row.image_url)?.toString() ?? null;
+
   return {
     id: row.id,
     feedId: row.feed_id,
@@ -28,17 +38,19 @@ function mapArticleRow(row: any): Article {
     categorySlug: row.category_slug ?? "",
     guid: row.guid,
     title: row.title,
-    link: row.link,
+    link: rawLink,
     author: row.author ?? null,
     publishedAt: row.published_at ?? null,
     content: row.content ?? null,
-    imageUrl: row.image_url ?? null,
+    imageUrl: safeImageUrl,
     summary: row.summary ?? null,
     summaryModel: row.summary_model ?? null,
     isRead: row.is_read === 1,
     isSaved: row.is_saved === 1,
     groupId: row.group_id ?? null,
     fetchedAt: row.fetched_at,
+    relevanceScore: row.relevance_score ?? 0,
+    isPromoted: row.is_promoted === 1,
   };
 }
 
@@ -84,10 +96,23 @@ export function getCategoryBySlug(slug: string): Category | undefined {
 // ---------------------------------------------------------------------------
 export function getArticlesByCategory(
   slug: string | null,
-  options: { limit?: number; offset?: number; unreadOnly?: boolean } = {}
+  options: {
+    limit?: number;
+    offset?: number;
+    unreadOnly?: boolean;
+    promotedOnly?: boolean;
+  } = {}
 ): Article[] {
   const db = getDb();
-  const { limit = 50, offset = 0, unreadOnly = false } = options;
+  const {
+    limit = 50,
+    offset = 0,
+    unreadOnly = false,
+    promotedOnly
+  } = options;
+
+  // Use explicit promotedOnly parameter (no automatic filtering)
+  const shouldFilterPromoted = promotedOnly === true;
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -98,6 +123,22 @@ export function getArticlesByCategory(
   }
   if (unreadOnly) {
     conditions.push("a.is_read = 0");
+  }
+  if (shouldFilterPromoted) {
+    conditions.push("a.is_promoted = 1");
+  }
+
+  // Sports filter: Only basketball and Olympics
+  if (slug === "sports") {
+    conditions.push(`(
+      a.title LIKE '%basketball%' OR
+      a.title LIKE '%Basketball%' OR
+      a.title LIKE '%NBA%' OR
+      a.title LIKE '%NCAA%' OR
+      a.title LIKE '%olympic%' OR
+      a.title LIKE '%Olympic%' OR
+      a.title LIKE '%Olympics%'
+    )`);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -116,9 +157,13 @@ export function getArticlesByCategory(
 
 export function getArticleGroupsByCategory(
   slug: string | null,
-  limit: number = 30
+  options: { limit?: number; promotedOnly?: boolean } = {}
 ): ArticleGroup[] {
   const db = getDb();
+  const { limit = 30, promotedOnly } = options;
+
+  // Use explicit promotedOnly parameter (no automatic filtering)
+  const shouldFilterPromoted = promotedOnly === true;
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -126,6 +171,30 @@ export function getArticleGroupsByCategory(
   if (slug) {
     conditions.push("c.slug = ?");
     params.push(slug);
+  }
+
+  // If filtering promoted, only show groups where representative is promoted
+  if (shouldFilterPromoted) {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM articles a_rep
+      WHERE a_rep.id = ag.representative_id AND a_rep.is_promoted = 1
+    )`);
+  }
+
+  // Sports filter: Only basketball and Olympics
+  if (slug === "sports") {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM articles a_rep
+      WHERE a_rep.id = ag.representative_id AND (
+        a_rep.title LIKE '%basketball%' OR
+        a_rep.title LIKE '%Basketball%' OR
+        a_rep.title LIKE '%NBA%' OR
+        a_rep.title LIKE '%NCAA%' OR
+        a_rep.title LIKE '%olympic%' OR
+        a_rep.title LIKE '%Olympic%' OR
+        a_rep.title LIKE '%Olympics%'
+      )
+    )`);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -143,31 +212,38 @@ export function getArticleGroupsByCategory(
 
   const groupRows = db.prepare(groupsSql).all(...params) as any[];
 
-  return groupRows.map((g) => {
-    // Get all articles in this group
-    const articleRows = db
-      .prepare(`${ARTICLE_SELECT} WHERE a.group_id = ? ORDER BY a.is_read ASC, a.published_at DESC`)
-      .all(g.id) as any[];
-    const articles = articleRows.map(mapArticleRow);
+  return groupRows
+    .map((g) => {
+      // Get all articles in this group
+      const articleRows = db
+        .prepare(`${ARTICLE_SELECT} WHERE a.group_id = ? ORDER BY a.is_read ASC, a.published_at DESC`)
+        .all(g.id) as any[];
+      const articles = articleRows.map(mapArticleRow);
 
-    // Find the representative article
-    const repRow = g.representative_id
-      ? (db
-          .prepare(`${ARTICLE_SELECT} WHERE a.id = ?`)
-          .get(g.representative_id) as any | undefined)
-      : null;
-    const representative = repRow ? mapArticleRow(repRow) : articles[0];
+      // Skip groups with no articles
+      if (articles.length === 0) {
+        return null;
+      }
 
-    return {
-      id: g.id,
-      label: g.label,
-      categoryId: g.category_id,
-      representativeId: g.representative_id,
-      articleCount: g.article_count,
-      representative,
-      articles,
-    } as ArticleGroup;
-  });
+      // Find the representative article
+      const repRow = g.representative_id
+        ? (db
+            .prepare(`${ARTICLE_SELECT} WHERE a.id = ?`)
+            .get(g.representative_id) as any | undefined)
+        : null;
+      const representative = repRow ? mapArticleRow(repRow) : articles[0];
+
+      return {
+        id: g.id,
+        label: g.label,
+        categoryId: g.category_id,
+        representativeId: g.representative_id,
+        articleCount: g.article_count,
+        representative,
+        articles,
+      } as ArticleGroup;
+    })
+    .filter((g): g is ArticleGroup => g !== null);
 }
 
 export function getArticleById(id: number): Article | undefined {
@@ -185,6 +261,20 @@ export function upsertArticle(
   titleHash: string
 ): number | null {
   const db = getDb();
+  const safeLink = parseHttpUrl(article.link);
+  if (!safeLink) {
+    return null;
+  }
+
+  const safeImageUrl = parseHttpUrl(article.imageUrl)?.toString() ?? null;
+  const safeTitle = stripHtml(article.title).slice(0, 500);
+  const safeAuthor = article.author
+    ? stripHtml(article.author).slice(0, 200)
+    : null;
+  const safeContent = article.content
+    ? stripHtml(article.content).slice(0, 8000)
+    : null;
+
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO articles
@@ -194,12 +284,12 @@ export function upsertArticle(
     .run(
       feedId,
       article.guid,
-      article.title,
-      article.link,
-      article.author,
+      safeTitle,
+      safeLink.toString(),
+      safeAuthor,
       article.publishedAt,
-      article.content,
-      article.imageUrl,
+      safeContent,
+      safeImageUrl,
       titleHash
     );
 
@@ -220,7 +310,8 @@ export function updateArticleSummary(
 
 export function updateArticleContent(id: number, content: string): void {
   const db = getDb();
-  db.prepare("UPDATE articles SET content = ? WHERE id = ?").run(content, id);
+  const safeContent = stripHtml(content).slice(0, 8000);
+  db.prepare("UPDATE articles SET content = ? WHERE id = ?").run(safeContent, id);
 }
 
 export function markArticleRead(id: number): void {
@@ -511,12 +602,27 @@ export function getAllFeeds(): Feed[] {
   return rows.map((r) => ({
     id: r.id,
     categoryId: r.category_id,
+    categorySlug: r.category_slug ?? null,
     name: r.name,
     url: r.url,
     enabled: r.enabled === 1,
     lastFetchedAt: r.last_fetched_at ?? null,
     lastError: r.last_error ?? null,
+    sourceWeight: r.source_weight ?? 1.0,
   }));
+}
+
+export function getFeedCategorySlug(feedId: number): string | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT c.slug
+       FROM feeds f
+       JOIN categories c ON f.category_id = c.id
+       WHERE f.id = ?`
+    )
+    .get(feedId) as { slug: string } | undefined;
+  return row?.slug ?? null;
 }
 
 export function getFeedsByCategory(categorySlug: string): Feed[] {
@@ -538,6 +644,7 @@ export function getFeedsByCategory(categorySlug: string): Feed[] {
     enabled: r.enabled === 1,
     lastFetchedAt: r.last_fetched_at ?? null,
     lastError: r.last_error ?? null,
+    sourceWeight: r.source_weight ?? 1.0,
   }));
 }
 
@@ -635,8 +742,36 @@ export function getArticleCountByCategory(): {
     .prepare(
       `SELECT
          c.slug,
-         COUNT(a.id) AS total,
-         SUM(CASE WHEN a.is_read = 0 THEN 1 ELSE 0 END) AS unread
+         COUNT(CASE
+           WHEN c.slug = 'sports' THEN
+             CASE WHEN (
+               a.title LIKE '%basketball%' OR
+               a.title LIKE '%Basketball%' OR
+               a.title LIKE '%NBA%' OR
+               a.title LIKE '%NCAA%' OR
+               a.title LIKE '%olympic%' OR
+               a.title LIKE '%Olympic%' OR
+               a.title LIKE '%Olympics%'
+             ) THEN a.id END
+           ELSE a.id
+         END) AS total,
+         SUM(CASE
+           WHEN a.is_read = 0 THEN
+             CASE
+               WHEN c.slug = 'sports' THEN
+                 CASE WHEN (
+                   a.title LIKE '%basketball%' OR
+                   a.title LIKE '%Basketball%' OR
+                   a.title LIKE '%NBA%' OR
+                   a.title LIKE '%NCAA%' OR
+                   a.title LIKE '%olympic%' OR
+                   a.title LIKE '%Olympic%' OR
+                   a.title LIKE '%Olympics%'
+                 ) THEN 1 END
+               ELSE 1
+             END
+           ELSE 0
+         END) AS unread
        FROM categories c
        LEFT JOIN feeds f ON f.category_id = c.id
        LEFT JOIN articles a ON a.feed_id = f.id
@@ -820,23 +955,160 @@ export function getRemainingQuota(): number {
 // ---------------------------------------------------------------------------
 // Settings Management
 // ---------------------------------------------------------------------------
+const ENCRYPTED_SETTING_KEYS = new Set(["brave_search_api_key"]);
+const ENCRYPTED_VALUE_PREFIX = "encv1";
+
+export class SettingsEncryptionRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SettingsEncryptionRequiredError";
+  }
+}
+
+function getEnvOverrideForSetting(key: string): string | null {
+  switch (key) {
+    case "brave_search_api_key":
+      return process.env.BRAVE_SEARCH_API_KEY?.trim() || null;
+    default:
+      return null;
+  }
+}
+
+function getSettingsEncryptionKey(): Buffer | null {
+  const raw = process.env.NEWSIXITY_SETTINGS_ENCRYPTION_KEY?.trim();
+  if (!raw) return null;
+  return createHash("sha256").update(raw).digest();
+}
+
+function encryptSettingValue(value: string): string {
+  const key = getSettingsEncryptionKey();
+  if (!key) {
+    throw new SettingsEncryptionRequiredError(
+      "NEWSIXITY_SETTINGS_ENCRYPTION_KEY is required to store sensitive settings"
+    );
+  }
+
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return [
+    ENCRYPTED_VALUE_PREFIX,
+    iv.toString("base64"),
+    tag.toString("base64"),
+    encrypted.toString("base64"),
+  ].join(":");
+}
+
+function decryptSettingValue(value: string): string | null {
+  if (!value.startsWith(`${ENCRYPTED_VALUE_PREFIX}:`)) {
+    return value;
+  }
+
+  const key = getSettingsEncryptionKey();
+  if (!key) return null;
+
+  const payload = value.slice(ENCRYPTED_VALUE_PREFIX.length + 1);
+  const [ivB64, tagB64, dataB64] = payload.split(":");
+  if (!ivB64 || !tagB64 || !dataB64) {
+    return null;
+  }
+
+  try {
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      key,
+      Buffer.from(ivB64, "base64")
+    );
+    decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(dataB64, "base64")),
+      decipher.final(),
+    ]);
+    return decrypted.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function isEncryptedSettingValue(value: string): boolean {
+  return value.startsWith(`${ENCRYPTED_VALUE_PREFIX}:`);
+}
+
+function maybeEncryptStoredSettingValue(
+  db: ReturnType<typeof getDb>,
+  key: string,
+  storedValue: string | null
+): string | null {
+  if (storedValue === null) return null;
+  if (!ENCRYPTED_SETTING_KEYS.has(key)) return storedValue;
+  if (isEncryptedSettingValue(storedValue)) return storedValue;
+  if (!getSettingsEncryptionKey()) return storedValue;
+
+  const encryptedValue = encryptSettingValue(storedValue);
+  db.prepare(
+    `UPDATE settings
+     SET value = ?, updated_at = datetime('now')
+     WHERE key = ?`
+  ).run(encryptedValue, key);
+
+  return encryptedValue;
+}
+
+function normalizeSettingValueForRead(
+  key: string,
+  value: string | null
+): string | null {
+  const envOverride = getEnvOverrideForSetting(key);
+  if (envOverride !== null) {
+    return envOverride;
+  }
+
+  if (value === null) return null;
+  if (!ENCRYPTED_SETTING_KEYS.has(key)) return value;
+  return decryptSettingValue(value);
+}
+
+function normalizeSettingValueForWrite(
+  key: string,
+  value: string | null
+): string | null {
+  if (value === null) return null;
+  if (!ENCRYPTED_SETTING_KEYS.has(key)) return value;
+  return encryptSettingValue(value);
+}
+
 export function getSetting(key: string): string | null {
   const db = getDb();
   const row = db
     .prepare("SELECT value FROM settings WHERE key = ?")
     .get(key) as { value: string | null } | undefined;
-  return row?.value ?? null;
+  const storedValue = maybeEncryptStoredSettingValue(db, key, row?.value ?? null);
+  return normalizeSettingValueForRead(key, storedValue);
 }
 
 export function setSetting(key: string, value: string | null): void {
+  // When sensitive setting is provided via environment, don't persist DB overrides.
+  if (ENCRYPTED_SETTING_KEYS.has(key) && getEnvOverrideForSetting(key) !== null) {
+    return;
+  }
+
+  if (ENCRYPTED_SETTING_KEYS.has(key) && value !== null && !getSettingsEncryptionKey()) {
+    throw new SettingsEncryptionRequiredError(
+      "Configure NEWSIXITY_SETTINGS_ENCRYPTION_KEY before saving API keys"
+    );
+  }
+
   const db = getDb();
+  const valueForWrite = normalizeSettingValueForWrite(key, value);
   db.prepare(
     `INSERT INTO settings (key, value, updated_at)
      VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET
        value = excluded.value,
        updated_at = datetime('now')`
-  ).run(key, value);
+  ).run(key, valueForWrite);
 }
 
 export function getAllSettings(): Record<string, string | null> {
@@ -847,7 +1119,14 @@ export function getAllSettings(): Record<string, string | null> {
 
   const settings: Record<string, string | null> = {};
   for (const row of rows) {
-    settings[row.key] = row.value;
+    const storedValue = maybeEncryptStoredSettingValue(db, row.key, row.value);
+    settings[row.key] = normalizeSettingValueForRead(row.key, storedValue);
+  }
+
+  // Ensure env overrides are represented even if DB has no row.
+  const braveKeyOverride = getEnvOverrideForSetting("brave_search_api_key");
+  if (braveKeyOverride !== null) {
+    settings.brave_search_api_key = braveKeyOverride;
   }
   return settings;
 }
@@ -1161,8 +1440,22 @@ export function createManualArticle(data: {
     throw new Error("Manual Links feed not found");
   }
 
+  const safeUrl = parseHttpUrl(data.url);
+  if (!safeUrl) {
+    throw new Error("Manual links must use http/https URLs");
+  }
+
+  const safeImageUrl = parseHttpUrl(data.imageUrl)?.toString() ?? null;
+  const safeTitle = stripHtml(data.title).slice(0, 500);
+  const safeAuthor = data.author
+    ? stripHtml(data.author).slice(0, 200)
+    : "Manual Entry";
+  const safeContent = data.content
+    ? stripHtml(data.content).slice(0, 8000)
+    : null;
+
   // Generate GUID from URL hash to prevent duplicates
-  const urlHash = createHash('sha256').update(data.url).digest('hex');
+  const urlHash = createHash('sha256').update(safeUrl.toString()).digest('hex');
   const guid = `manual-${urlHash.slice(0, 32)}`;
 
   const result = db
@@ -1174,11 +1467,11 @@ export function createManualArticle(data: {
     .run(
       feedId,
       guid,
-      data.title,
-      data.url,
-      data.author ?? "Manual Entry",
-      data.content ?? null,
-      data.imageUrl ?? null
+      safeTitle,
+      safeUrl.toString(),
+      safeAuthor,
+      safeContent,
+      safeImageUrl
     );
 
   if (result.changes === 0) return null;
@@ -1214,6 +1507,14 @@ export function createArticlesFromSearchResults(
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
+    const safeUrl = parseHttpUrl(result.url);
+    if (!safeUrl) continue;
+
+    const safeTitle = stripHtml(result.title).slice(0, 500);
+    const safeDescription = result.description
+      ? stripHtml(result.description).slice(0, 8000)
+      : null;
+
     // Use parent hash + index for GUID (matches getSearchResults pattern)
     const guid = `${parentUrlHash}-${i}`;
 
@@ -1226,10 +1527,10 @@ export function createArticlesFromSearchResults(
       .run(
         feedId,
         guid,
-        result.title,
-        result.url,
+        safeTitle,
+        safeUrl.toString(),
         "Search Result",
-        result.description || null
+        safeDescription
       );
 
     if (insertResult.changes > 0) {
@@ -1279,4 +1580,202 @@ export function getSearchResults(articleUrl: string): Article[] {
     .all(feedId, `${urlHash.slice(0, 32)}-%`, parentGuid) as any[];
 
   return results.map(mapArticleRow);
+}
+
+// ---------------------------------------------------------------------------
+// Article Ranking & Promotion
+// ---------------------------------------------------------------------------
+
+/** Categories that have a daily article cap. */
+export const CAPPED_CATEGORIES = ["finance", "gaming", "sports", "world-news"];
+
+/** Default daily article limit per capped category. */
+export const DAILY_ARTICLE_LIMIT = 20;
+
+export function updateArticleScore(id: number, score: number): void {
+  const db = getDb();
+  db.prepare("UPDATE articles SET relevance_score = ? WHERE id = ?").run(
+    score,
+    id
+  );
+}
+
+export function updateArticleScores(
+  updates: { id: number; score: number }[]
+): void {
+  const db = getDb();
+  const stmt = db.prepare(
+    "UPDATE articles SET relevance_score = ? WHERE id = ?"
+  );
+  const tx = db.transaction(() => {
+    for (const u of updates) {
+      stmt.run(u.score, u.id);
+    }
+  });
+  tx();
+}
+
+export function resetPromotionForCategory(categorySlug: string): void {
+  const db = getDb();
+  db.prepare(
+    `UPDATE articles SET is_promoted = 0
+     WHERE is_promoted = 1 AND feed_id IN (
+       SELECT f.id FROM feeds f JOIN categories c ON f.category_id = c.id WHERE c.slug = ?
+     )
+     AND date(published_at) < date('now')`
+  ).run(categorySlug);
+}
+
+export function promoteTopArticles(
+  categorySlug: string,
+  limit: number = DAILY_ARTICLE_LIMIT
+): void {
+  const db = getDb();
+
+  // Clear today's promotions for this category first
+  db.prepare(
+    `UPDATE articles SET is_promoted = 0
+     WHERE feed_id IN (
+       SELECT f.id FROM feeds f JOIN categories c ON f.category_id = c.id WHERE c.slug = ?
+     )
+     AND date(COALESCE(published_at, fetched_at)) >= date('now', '-1 day')`
+  ).run(categorySlug);
+
+  // Promote top N by relevance score from last 24h
+  db.prepare(
+    `UPDATE articles SET is_promoted = 1
+     WHERE id IN (
+       SELECT a.id FROM articles a
+       JOIN feeds f ON a.feed_id = f.id
+       JOIN categories c ON f.category_id = c.id
+       WHERE c.slug = ?
+         AND date(COALESCE(a.published_at, a.fetched_at)) >= date('now', '-1 day')
+       ORDER BY a.relevance_score DESC
+       LIMIT ?
+     )`
+  ).run(categorySlug, limit);
+}
+
+export function deleteUnpromotedArticlesFromToday(categorySlug: string): number {
+  // DISABLED: Not deleting any articles - user wants to see everything
+  // This function is kept for future use if deletion is re-enabled
+
+  console.log(`[Newsixity] Deletion disabled - keeping all articles in ${categorySlug}`);
+  return 0;
+}
+
+export function getArticleGroupSize(articleId: number): number {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT ag.article_count
+       FROM article_groups ag
+       JOIN articles a ON a.group_id = ag.id
+       WHERE a.id = ?`
+    )
+    .get(articleId) as { article_count: number } | undefined;
+  return row?.article_count ?? 1;
+}
+
+export function getFeedSourceWeight(feedId: number): number {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT source_weight FROM feeds WHERE id = ?")
+    .get(feedId) as { source_weight: number } | undefined;
+  return row?.source_weight ?? 1.0;
+}
+
+export function updateFeedSourceWeight(
+  feedId: number,
+  weight: number
+): void {
+  const db = getDb();
+  db.prepare("UPDATE feeds SET source_weight = ? WHERE id = ?").run(
+    weight,
+    feedId
+  );
+}
+
+export function getTodayArticleIds(categorySlug: string): number[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT a.id FROM articles a
+       JOIN feeds f ON a.feed_id = f.id
+       JOIN categories c ON f.category_id = c.id
+       WHERE c.slug = ?
+         AND date(COALESCE(a.published_at, a.fetched_at)) >= date('now', '-1 day')
+       ORDER BY a.published_at DESC`
+    )
+    .all(categorySlug) as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
+// ---------------------------------------------------------------------------
+// User Preferences
+// ---------------------------------------------------------------------------
+
+export interface UserPreference {
+  id: number;
+  categorySlug: string;
+  keyword: string;
+  weight: number;
+  source: string;
+  updatedAt: string;
+}
+
+export function getPreferenceKeywords(
+  categorySlug?: string
+): UserPreference[] {
+  const db = getDb();
+  if (categorySlug) {
+    return db
+      .prepare(
+        `SELECT id, category_slug, keyword, weight, source, updated_at
+         FROM user_preferences
+         WHERE category_slug = ?
+         ORDER BY weight DESC`
+      )
+      .all(categorySlug) as any[];
+  }
+  return db
+    .prepare(
+      `SELECT id, category_slug, keyword, weight, source, updated_at
+       FROM user_preferences
+       ORDER BY category_slug, weight DESC`
+    )
+    .all() as any[];
+}
+
+export function upsertPreferenceKeyword(
+  categorySlug: string,
+  keyword: string,
+  weight: number,
+  source: string = "auto"
+): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO user_preferences (category_slug, keyword, weight, source, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(category_slug, keyword) DO UPDATE SET
+       weight = excluded.weight,
+       source = CASE WHEN excluded.source = 'manual' THEN 'manual' ELSE user_preferences.source END,
+       updated_at = datetime('now')`
+  ).run(categorySlug, keyword.toLowerCase(), weight, source);
+}
+
+export function deletePreferenceKeyword(id: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM user_preferences WHERE id = ?").run(id);
+}
+
+export function clearAutoPreferences(categorySlug?: string): void {
+  const db = getDb();
+  if (categorySlug) {
+    db.prepare(
+      "DELETE FROM user_preferences WHERE source = 'auto' AND category_slug = ?"
+    ).run(categorySlug);
+  } else {
+    db.prepare("DELETE FROM user_preferences WHERE source = 'auto'").run();
+  }
 }
