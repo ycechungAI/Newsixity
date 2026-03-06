@@ -1418,6 +1418,88 @@ export function getSummarizationQueueCount(): number {
   return row.count;
 }
 
+/** Min age to cull unsummarized, non-saved articles (months). */
+const CULL_UNSUMMARIZED_AGE_MONTHS = 6;
+/** Min age to cull summarized articles (months). Never delete saved/favourite. */
+const CULL_SUMMARIZED_AGE_MONTHS = 12;
+
+/**
+ * Keep up to `limit` unsummarized articles; cull the rest.
+ * Only ever culls unfavourited (is_saved = 0) articles; never touches saved/favourite.
+ * Priority: (1) cannot-summarized (placeholder), (2) unsummarized, (3) old summarized.
+ */
+export function cullUnsummarizedQueueToLimit(limit: number): number {
+  const db = getDb();
+  let deleted = 0;
+  const deleteStmt = db.prepare("DELETE FROM articles WHERE id = ?");
+
+  // 1) Priority: cull "cannot summarized" (placeholder summary, unfavourited, 6+ months)
+  const selectCannotSummarized = db.prepare(
+    `SELECT a.id FROM articles a
+     WHERE (a.summary LIKE '[No content to summarize]%' OR a.summary LIKE '[Summarization failed:%')
+       AND a.is_saved = 0
+       AND (COALESCE(a.published_at, a.fetched_at) < datetime('now', '-' || ? || ' months'))
+     ORDER BY a.fetched_at ASC, a.id ASC
+     LIMIT 500`
+  );
+  const cannotIds = selectCannotSummarized.all(CULL_UNSUMMARIZED_AGE_MONTHS) as { id: number }[];
+  for (const row of cannotIds) {
+    deleteStmt.run(row.id);
+    deleted++;
+  }
+
+  // 2) Then: keep 2000 unsummarized; cull the rest (unsummarized, unfavourited, 6+ months)
+  const selectUnsummarized = db.prepare(
+    `SELECT a.id FROM articles a
+     WHERE (a.summary IS NULL OR a.summary = '')
+       AND a.is_saved = 0
+       AND (COALESCE(a.published_at, a.fetched_at) < datetime('now', '-' || ? || ' months'))
+     ORDER BY a.fetched_at ASC, a.id ASC
+     LIMIT 1`
+  );
+  while (getSummarizationQueueCount() > limit) {
+    const row = selectUnsummarized.get(CULL_UNSUMMARIZED_AGE_MONTHS) as { id: number } | undefined;
+    if (!row) break;
+    deleteStmt.run(row.id);
+    deleted++;
+  }
+
+  // 3) Cull summarized, unfavourited older than 1 year (batch, to free space)
+  const selectSummarized = db.prepare(
+    `SELECT a.id FROM articles a
+     WHERE (a.summary IS NOT NULL AND a.summary != '')
+       AND a.is_saved = 0
+       AND (COALESCE(a.published_at, a.fetched_at) < datetime('now', '-' || ? || ' months'))
+     ORDER BY a.fetched_at ASC, a.id ASC
+     LIMIT 100`
+  );
+  const oldSummarized = selectSummarized.all(CULL_SUMMARIZED_AGE_MONTHS) as { id: number }[];
+  for (const row of oldSummarized) {
+    deleteStmt.run(row.id);
+    deleted++;
+  }
+
+  return deleted;
+}
+
+/**
+ * Count of finance articles with fetched_at in the last 24 hours.
+ * Used to cap new finance inserts at FINANCE_DAILY_INSERT_CAP per day.
+ */
+export function getFinanceArticlesCountInLast24h(): number {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM articles a
+       JOIN feeds f ON a.feed_id = f.id
+       JOIN categories c ON f.category_id = c.id
+       WHERE c.slug = 'finance'
+         AND a.fetched_at >= datetime('now', '-1 day')`
+    )
+    .get() as { count: number };
+  return row.count;
+}
+
 export function getManualLinksFeedId(): number | null {
   const db = getDb();
   const row = db
@@ -1592,6 +1674,12 @@ export const CAPPED_CATEGORIES = ["finance", "gaming", "sports", "world-news"];
 /** Default daily article limit per capped category. */
 export const DAILY_ARTICLE_LIMIT = 20;
 
+/** Max new finance articles to insert per 24 hours (priority/top sources only). */
+export const FINANCE_DAILY_INSERT_CAP = 20;
+
+/** Max unsummarized articles before we stop summarization and cull oldest non-favourited. */
+export const MAX_UNSUMMARIZED_QUEUE = 2000;
+
 export function updateArticleScore(id: number, score: number): void {
   const db = getDb();
   db.prepare("UPDATE articles SET relevance_score = ? WHERE id = ?").run(
@@ -1709,6 +1797,20 @@ export function getTodayArticleIds(categorySlug: string): number[] {
     )
     .all(categorySlug) as { id: number }[];
   return rows.map((r) => r.id);
+}
+
+/** Count of promoted (top) articles in a category. Used for finance section pagination. */
+export function getPromotedArticleCount(categorySlug: string): number {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM articles a
+       JOIN feeds f ON a.feed_id = f.id
+       JOIN categories c ON f.category_id = c.id
+       WHERE c.slug = ? AND a.is_promoted = 1`
+    )
+    .get(categorySlug) as { count: number };
+  return row?.count ?? 0;
 }
 
 // ---------------------------------------------------------------------------

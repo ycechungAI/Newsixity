@@ -1,5 +1,9 @@
 import { backgroundSummarize } from "./background";
-import { getSummarizationQueueCount } from "@/lib/db/queries";
+import {
+  getSummarizationQueueCount,
+  cullUnsummarizedQueueToLimit,
+  MAX_UNSUMMARIZED_QUEUE,
+} from "@/lib/db/queries";
 
 const globalForSummarizer = globalThis as unknown as {
   __newsixitySummarizerScheduler: NodeJS.Timeout | undefined;
@@ -7,14 +11,26 @@ const globalForSummarizer = globalThis as unknown as {
 };
 
 /**
- * Check for unsummarized articles and process them
+ * Check for unsummarized articles and process them.
+ * If queue exceeds MAX_UNSUMMARIZED_QUEUE, cull oldest non-favourited first, then summarize.
  */
 async function checkAndSummarize(): Promise<void> {
   try {
-    const queueCount = getSummarizationQueueCount();
+    let queueCount = getSummarizationQueueCount();
 
     if (queueCount === 0) {
       return; // Nothing to do
+    }
+
+    if (queueCount > MAX_UNSUMMARIZED_QUEUE) {
+      console.log(
+        `[Newsixity] Summarization queue over limit (${queueCount} > ${MAX_UNSUMMARIZED_QUEUE}), culling oldest non-favourited...`
+      );
+      const culled = cullUnsummarizedQueueToLimit(MAX_UNSUMMARIZED_QUEUE);
+      queueCount = getSummarizationQueueCount();
+      console.log(
+        `[Newsixity] Culled ${culled} articles; queue now ${queueCount}`
+      );
     }
 
     console.log(`[Newsixity] Summarization check: ${queueCount} articles in queue`);

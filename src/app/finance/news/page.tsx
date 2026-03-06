@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
-import { getArticlesByCategory, getArticleCountByCategory } from "@/lib/db/queries";
+import { getArticlesByCategory, getArticleCountByCategory, getPromotedArticleCount } from "@/lib/db/queries";
 import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
@@ -28,17 +28,18 @@ export default async function FinanceNewsPage({
   const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const perPage = getPerPage(viewMode);
 
-  // Get article count
+  // Get article count for promoted (top) finance only
   const counts = getArticleCountByCategory();
   const financeCount = counts.find(c => c.slug === 'finance');
   const financeUnread = financeCount?.unread ?? 0;
-  const totalArticles = financeCount?.total || 0;
+  const totalArticles = getPromotedArticleCount("finance");
   const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
 
-  // Fetch finance articles
+  // Fetch finance articles: only top/priority (promoted) for the financial section
   const financeArticles = getArticlesByCategory("finance", {
     limit: perPage,
     offset: (currentPage - 1) * perPage,
+    promotedOnly: true,
   });
 
   return (

@@ -105,9 +105,11 @@ interface FeedResult {
 export async function fetchAllFeeds(): Promise<FeedResult[]> {
   const db = getDb();
 
-  const allFeeds = db
-    .prepare(`SELECT id, url, enabled FROM feeds WHERE enabled = 1`)
-    .all() as FeedRow[];
+  const allFeeds = (
+    db
+      .prepare(`SELECT id, url, enabled FROM feeds WHERE enabled = 1`)
+      .all() as FeedRow[]
+  ).filter((f) => !f.url.startsWith("internal://"));
 
   const updateLastFetched = db.prepare(
     `UPDATE feeds SET last_fetched_at = datetime('now'), last_error = NULL WHERE id = ?`

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { seedAllFeeds } from "@/lib/rss/feeds";
+import { seedAllFeeds, DEFAULT_FEEDS } from "@/lib/rss/feeds";
 import { fetchAllFeeds } from "@/lib/rss/parser";
 import {
   upsertArticle,
@@ -7,6 +7,8 @@ import {
   getArticlesByCategory,
   getArticleById,
   getFeedCategorySlug,
+  getFinanceArticlesCountInLast24h,
+  FINANCE_DAILY_INSERT_CAP,
 } from "@/lib/db/queries";
 import { hashTitle, isDuplicate } from "@/lib/dedup/similarity";
 import { groupArticles } from "@/lib/dedup/grouping";
@@ -16,6 +18,29 @@ import { z } from "zod";
 import { badRequest, validationError } from "@/lib/server/api-response";
 import { InvalidJsonError, parseOptionalJsonBody } from "@/lib/server/request";
 import type { Article, RefreshResult } from "@/types";
+
+/** Finance feed URL order for priority (top sources first). */
+const FINANCE_FEED_URL_ORDER = (DEFAULT_FEEDS.finance ?? []).map((f) => f.url);
+
+function sortFeedResultsForFinancePriority<T extends { feedUrl: string }>(
+  results: T[],
+  getCategory: (r: T) => string | null
+): T[] {
+  return [...results].sort((a, b) => {
+    const catA = getCategory(a);
+    const catB = getCategory(b);
+    const aFinance = catA === "finance";
+    const bFinance = catB === "finance";
+    if (aFinance && !bFinance) return -1;
+    if (!aFinance && bFinance) return 1;
+    if (!aFinance && !bFinance) return 0;
+    const idxA = FINANCE_FEED_URL_ORDER.indexOf(a.feedUrl);
+    const idxB = FINANCE_FEED_URL_ORDER.indexOf(b.feedUrl);
+    const orderA = idxA === -1 ? 999 : idxA;
+    const orderB = idxB === -1 ? 999 : idxB;
+    return orderA - orderB;
+  });
+}
 
 const RefreshRequestSchema = z
   .object({
@@ -39,11 +64,17 @@ export async function POST(request: Request) {
     await seedAllFeeds();
 
     // Fetch articles from all enabled feeds
-    const feedResults = await fetchAllFeeds();
+    const rawFeedResults = await fetchAllFeeds();
+    // Process finance feeds first in priority order (MarketWatch, CNBC, Yahoo, etc.) so we cap at 20/day from top sources
+    const feedResults = sortFeedResultsForFinancePriority(rawFeedResults, (r) =>
+      getFeedCategorySlug(r.feedId)
+    );
 
     let refreshed = 0;
     let newArticles = 0;
     const errors: string[] = [];
+    const financeCountStart = getFinanceArticlesCountInLast24h();
+    let financeInsertedThisSession = 0;
 
     // Track new articles per category for grouping
     const newArticlesByCategory = new Map<string, Article[]>();
@@ -77,6 +108,13 @@ export async function POST(request: Request) {
       }
 
       for (const article of feedResult.articles) {
+        // Cap finance at FINANCE_DAILY_INSERT_CAP new articles per 24h (priority sources first)
+        if (categorySlug === "finance") {
+          if (financeCountStart + financeInsertedThisSession >= FINANCE_DAILY_INSERT_CAP) {
+            continue;
+          }
+        }
+
         const titleHash = hashTitle(article.title);
 
         // Check for exact title hash duplicate
@@ -102,6 +140,7 @@ export async function POST(request: Request) {
 
         if (insertedId !== null) {
           newArticles++;
+          if (categorySlug === "finance") financeInsertedThisSession++;
           const inserted = getArticleById(insertedId);
           if (inserted) {
             existingArticles.push(inserted);
