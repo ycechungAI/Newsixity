@@ -7,6 +7,9 @@ import {
   updateArticleSummary,
   updateArticleContent,
   getArticleById,
+  getSummarizationQueueCount,
+  cullUnsummarizedQueueToLimit,
+  MAX_UNSUMMARIZED_QUEUE,
 } from "@/lib/db/queries";
 import { fetchArticleContent } from "@/lib/content/fetcher";
 import type { Article } from "@/types";
@@ -123,6 +126,15 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
 }> {
   if (backgroundRunning) {
     return { summarized: 0, errors: ["Background summarization already in progress"] };
+  }
+
+  // If queue is over limit, cull oldest non-favourited before running (so refresh-triggered runs also respect cap)
+  const queueCount = getSummarizationQueueCount();
+  if (queueCount > MAX_UNSUMMARIZED_QUEUE) {
+    const culled = cullUnsummarizedQueueToLimit(MAX_UNSUMMARIZED_QUEUE);
+    console.log(
+      `[Newsixity] Queue was ${queueCount}, culled ${culled} oldest non-favourited to ${MAX_UNSUMMARIZED_QUEUE}`
+    );
   }
 
   backgroundRunning = true;
