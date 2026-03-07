@@ -1376,6 +1376,11 @@ export interface SummarizationQueueItem {
   fetchedAt: string;
 }
 
+export function deleteArticleById(id: number): void {
+  const db = getDb();
+  db.prepare(`DELETE FROM articles WHERE id = ?`).run(id);
+}
+
 export function getSummarizationQueue(limit: number = 20): SummarizationQueueItem[] {
   const db = getDb();
   const rows = db
@@ -1483,20 +1488,22 @@ export function cullUnsummarizedQueueToLimit(limit: number): number {
 }
 
 /**
- * Count of finance articles with fetched_at in the last 24 hours.
- * Used to cap new finance inserts at FINANCE_DAILY_INSERT_CAP per day.
+ * Count of articles with fetched_at in the last 24 hours for a specific category.
+ * Used to cap new inserts at CATEGORY_DAILY_INSERT_CAP per day.
  */
-export function getFinanceArticlesCountInLast24h(): number {
+export const CATEGORY_DAILY_INSERT_CAP = 20;
+
+export function getCategoryArticlesCountInLast24h(categorySlug: string): number {
   const db = getDb();
   const row = db
     .prepare(
       `SELECT COUNT(*) as count FROM articles a
        JOIN feeds f ON a.feed_id = f.id
        JOIN categories c ON f.category_id = c.id
-       WHERE c.slug = 'finance'
+       WHERE c.slug = ?
          AND a.fetched_at >= datetime('now', '-1 day')`
     )
-    .get() as { count: number };
+    .get(categorySlug) as { count: number };
   return row.count;
 }
 

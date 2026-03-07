@@ -31,6 +31,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
   const articleId = article?.id ?? null;
   const [isRead, setIsRead]   = useState(article?.isRead ?? false);
   const [isSaved, setIsSaved] = useState(article?.isSaved ?? false);
+  const [isDeleted, setIsDeleted] = useState(false);
   const cardRef   = useRef<HTMLElement | null>(null);
   const markedRef = useRef(false);
 
@@ -105,7 +106,24 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     } catch { /* silent */ }
   }, [articleId, isSaved]);
 
-  if (!article) return null;
+  const handleDelete = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!articleId) return;
+    
+    if (window.confirm("Are you sure you want to completely delete this article?")) {
+      try {
+        const res = await fetch(`/api/articles/${articleId}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          setIsDeleted(true);
+        }
+      } catch { /* silent */ }
+    }
+  }, [articleId]);
+
+  if (!article || isDeleted) return null;
 
   // Card view (grid layout with optional image or video embed)
   if (cardView) {
@@ -135,6 +153,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
             <button className={`act-btn${isSaved ? " is-saved" : ""}`} onClick={toggleSave} title={isSaved ? "Unsave" : "Save"}>{isSaved ? "★" : "☆"}</button>
             <button className="act-btn" onClick={toggleRead} title={isRead ? "Mark unread" : "Mark read"}>{isRead ? "○" : "●"}</button>
             <a className="act-btn" href={safeOriginalUrl} target="_blank" rel="noopener noreferrer" title="Open original">↗</a>
+            <button className="act-btn" onClick={handleDelete} title="Delete article" style={{ color: "var(--subtle)" }}>×</button>
           </div>
         </div>
       </div>
@@ -179,6 +198,9 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
         >
           ↗
         </a>
+        <button className="act-btn" onClick={handleDelete} title="Delete article" style={{ color: "var(--subtle)", marginLeft: "auto" }}>
+          ×
+        </button>
       </div>
     </li>
   );

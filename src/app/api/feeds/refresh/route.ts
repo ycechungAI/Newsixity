@@ -7,8 +7,8 @@ import {
   getArticlesByCategory,
   getArticleById,
   getFeedCategorySlug,
-  getFinanceArticlesCountInLast24h,
-  FINANCE_DAILY_INSERT_CAP,
+  getCategoryArticlesCountInLast24h,
+  CATEGORY_DAILY_INSERT_CAP,
 } from "@/lib/db/queries";
 import { hashTitle, isDuplicate } from "@/lib/dedup/similarity";
 import { groupArticles } from "@/lib/dedup/grouping";
@@ -73,8 +73,8 @@ export async function POST(request: Request) {
     let refreshed = 0;
     let newArticles = 0;
     const errors: string[] = [];
-    const financeCountStart = getFinanceArticlesCountInLast24h();
-    let financeInsertedThisSession = 0;
+    const countStartByCategory = new Map<string, number>();
+    const insertedThisSessionByCategory = new Map<string, number>();
 
     // Track new articles per category for grouping
     const newArticlesByCategory = new Map<string, Article[]>();
@@ -108,11 +108,16 @@ export async function POST(request: Request) {
       }
 
       for (const article of feedResult.articles) {
-        // Cap finance at FINANCE_DAILY_INSERT_CAP new articles per 24h (priority sources first)
-        if (categorySlug === "finance") {
-          if (financeCountStart + financeInsertedThisSession >= FINANCE_DAILY_INSERT_CAP) {
-            continue;
-          }
+        // Cap all categories at CATEGORY_DAILY_INSERT_CAP new articles per 24h
+        let countStart = countStartByCategory.get(categorySlug);
+        if (countStart === undefined) {
+          countStart = getCategoryArticlesCountInLast24h(categorySlug);
+          countStartByCategory.set(categorySlug, countStart);
+        }
+        const insertedThisSession = insertedThisSessionByCategory.get(categorySlug) || 0;
+        
+        if (countStart + insertedThisSession >= CATEGORY_DAILY_INSERT_CAP) {
+          continue;
         }
 
         const titleHash = hashTitle(article.title);
@@ -140,7 +145,7 @@ export async function POST(request: Request) {
 
         if (insertedId !== null) {
           newArticles++;
-          if (categorySlug === "finance") financeInsertedThisSession++;
+          insertedThisSessionByCategory.set(categorySlug, (insertedThisSessionByCategory.get(categorySlug) || 0) + 1);
           const inserted = getArticleById(insertedId);
           if (inserted) {
             existingArticles.push(inserted);
