@@ -53,6 +53,17 @@ export default function ConsolePage() {
     }
   }
 
+  async function handleRemove(id: number) {
+    if (!confirm("Remove this article from the summarization queue?")) return;
+    try {
+      const res = await fetch(`/api/console/queue?id=${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setQueue(q => q.filter(item => item.id !== id));
+        setQueueCount(c => Math.max(0, c - 1));
+      }
+    } catch { alert("Failed to remove from queue."); }
+  }
+
   async function stopServers() {
     if (!confirm("Stop Ollama and Next.js dev servers?")) return;
     setStopping(true);
@@ -114,10 +125,18 @@ export default function ConsolePage() {
               <div style={{ color: "#166534", fontSize: 10 }}>Loading…</div>
             ) : queue.length > 0 ? (
               queue.map((item, i) => (
-                <div key={item.id} className="con-queue-item">
+                <div key={item.id} className="con-queue-item" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="con-queue-num">{i + 1}.</span>
-                  <span className="con-queue-title">{item.title}</span>
+                  <span className="con-queue-title" style={{ flex: 1 }}>{item.title}</span>
                   <span className="con-queue-meta">{item.categorySlug} · {item.feedName}</span>
+                  <button
+                    onClick={() => handleRemove(item.id)}
+                    className="con-btn con-btn-red"
+                    style={{ padding: "0 4px", fontSize: 10, lineHeight: 1 }}
+                    title="Remove from queue"
+                  >
+                    ×
+                  </button>
                 </div>
               ))
             ) : (

@@ -1487,6 +1487,15 @@ export function cullUnsummarizedQueueToLimit(limit: number): number {
   return deleted;
 }
 
+export function removeArticleFromQueue(id: number): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE articles
+    SET summary = '[Skipped: manually removed]', summary_model = 'skipped'
+    WHERE id = ?
+  `).run(id);
+}
+
 /**
  * Count of articles with fetched_at in the last 24 hours for a specific category.
  * Used to cap new inserts at CATEGORY_DAILY_INSERT_CAP per day.
