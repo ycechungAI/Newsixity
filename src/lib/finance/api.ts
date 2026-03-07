@@ -102,7 +102,7 @@ export async function getHeatmapSnapshot(date?: string): Promise<HeatmapSnapshot
     ? `/api/finance/heatmap?date=${encodeURIComponent(date)}`
     : '/api/finance/heatmap';
 
-  const response = await fetch(url);
+  const response = await fetch(url, { cache: 'no-store' });
 
   if (!response.ok) {
     throw new Error('Failed to fetch heatmap data');
@@ -113,7 +113,7 @@ export async function getHeatmapSnapshot(date?: string): Promise<HeatmapSnapshot
 
 // Get list of available heatmap dates
 export async function getHeatmapDates(): Promise<string[]> {
-  const response = await fetch('/api/finance/heatmap?list=true');
+  const response = await fetch('/api/finance/heatmap?list=true', { cache: 'no-store' });
 
   if (!response.ok) {
     throw new Error('Failed to fetch heatmap dates');

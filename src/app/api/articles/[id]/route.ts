@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getArticleById,
+  deleteArticleById,
   markArticleRead,
   markArticleUnread,
   toggleArticleSaved,
@@ -124,5 +125,36 @@ export async function PATCH(
       return badRequest("Invalid JSON payload");
     }
     return internalServerError("Article PATCH error", e);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const rateLimited = enforceRateLimit(request, {
+    routeKey: "article-delete",
+    limit: 60,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimited) return rateLimited;
+
+  try {
+    const { id: idParam } = await params;
+    const { id } = IdParamSchema.parse({ id: idParam });
+
+    const existing = getArticleById(id);
+    if (!existing) {
+      return NextResponse.json({ error: "Article not found" }, { status: 404 });
+    }
+
+    deleteArticleById(id);
+
+    return NextResponse.json({ success: true, categorySlug: existing.categorySlug ?? null });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      return validationError(e);
+    }
+    return internalServerError("Article DELETE error", e);
   }
 }

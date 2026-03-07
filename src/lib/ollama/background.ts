@@ -11,6 +11,7 @@ import {
   cullUnsummarizedQueueToLimit,
   MAX_UNSUMMARIZED_QUEUE,
 } from "@/lib/db/queries";
+import { getDb } from "@/lib/db";
 import { fetchArticleContent } from "@/lib/content/fetcher";
 import type { Article } from "@/types";
 import { OllamaUnavailableError } from "@/types";
@@ -141,6 +142,16 @@ export async function backgroundSummarize(limit: number = 10): Promise<{
   const batchSize = Math.max(1, Math.min(100, limit));
   let summarized = 0;
   const errors: string[] = [];
+  const db = getDb();
+
+  // Clear stuck tasks older than 2 hours before processing
+  db.prepare(`
+    UPDATE articles 
+    SET summary = '[Skipped: summarization timed out]', 
+        summary_model = 'skipped' 
+    WHERE (summary IS NULL OR summary = '') 
+      AND fetched_at < datetime('now', '-2 hours')
+  `).run();
 
   try {
     const available = await isOllamaAvailable();

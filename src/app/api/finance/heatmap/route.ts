@@ -4,6 +4,8 @@ import { fetchYahooQuotes } from '@/lib/finance/yahoo';
 import { SP500_STOCKS } from '@/lib/finance/sp500';
 import type { HeatmapStock } from '@/lib/finance/types';
 import { z } from "zod";
+
+export const dynamic = 'force-dynamic';
 import { enforceRateLimit } from "@/lib/server/rate-limit";
 import { internalServerError, validationError } from "@/lib/server/api-response";
 

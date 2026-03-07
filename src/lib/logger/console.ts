@@ -18,7 +18,7 @@ function stringifyArg(arg: unknown): string {
   }
 
   try {
-    return JSON.stringify(arg);
+    return JSON.stringify(arg, null, 2);
   } catch {
     return String(arg);
   }
@@ -59,8 +59,11 @@ export function installConsoleInterceptor() {
   interceptorInstalled = true;
 
   const originalLog = console.log;
+  const originalInfo = console.info;
   const originalWarn = console.warn;
   const originalError = console.error;
+  const originalDebug = console.debug;
+  const originalTrace = console.trace;
 
   console.log = (...args: unknown[]) => {
     originalLog(...args);
@@ -81,8 +84,24 @@ export function installConsoleInterceptor() {
   console.error = (...args: unknown[]) => {
     originalError(...args);
     const message = redactSensitive(args.map(stringifyArg).join(" "));
+    addLog('error', message.replace(/^\[Newsixity\]\s*/, ''));
+  };
 
-    // Capture all errors
+  console.info = (...args: unknown[]) => {
+    originalInfo(...args);
+    const message = redactSensitive(args.map(stringifyArg).join(" "));
+    addLog('info', message.replace(/^\[Newsixity\]\s*/, ''));
+  };
+
+  console.debug = (...args: unknown[]) => {
+    originalDebug(...args);
+    const message = redactSensitive(args.map(stringifyArg).join(" "));
+    addLog('info', message.replace(/^\[Newsixity\]\s*/, ''));
+  };
+
+  console.trace = (...args: unknown[]) => {
+    originalTrace(...args);
+    const message = redactSensitive(args.map(stringifyArg).join(" "));
     addLog('error', message.replace(/^\[Newsixity\]\s*/, ''));
   };
 
