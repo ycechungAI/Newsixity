@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import * as dbArticles from "@/db/index"; 
-import { SummarizationService } from "@/lib/services/SummarizationService";
+import { getArticleById, getUnsummarizedArticles, updateArticleSummary } from "@/lib/db/queries";
+import { SummarizationService, SessionLimitExceededError } from "@/lib/services/SummarizationService";
 
 /**
  * HTTP POST handler for triggering article summarization.
  */
 export async function POST(request: Request) {
   // --- 1. SAFETY CHECK & PREP ---
+  let body;
   try {
-    const body = await request.json(); // Parse JSON body safely
+    body = await request.json(); // Parse JSON body safely
   } catch (e) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     const articleId = body.articleId;
     
     // A. Find the Article via the API Gateway
-    const article = dbArticles.Articles.findById(articleId);
+    const article = getArticleById(articleId);
 
     if (!article) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
         console.log(`[API] Running single article summarization with model: ${requestedModel}`);
 
         const summary = await SummarizationService.summarizeSingleArticle(article.title, textToSummarize, requestedModel); 
-        await dbArticles.Articles.updateSummary(articleId, summary, "llama3.2"); // Note: DB update needs to reflect the used model in a real app flow
+        await updateArticleSummary(articleId, summary, requestedModel); // Use the actual model used
 
         return NextResponse.json({ message: "Single article successfully summarized.", summary });
     } catch (e) {
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     console.log("[API] Triggering batch resummarization sequence.");
 
     // A. Fetch all candidates
-    const articles = dbArticles.Articles.getUnsummarizedBatch(50, null); 
+    const articles = getUnsummarizedArticles(50, undefined); 
 
     if (!articles || articles.length === 0) {
       return NextResponse.json({ message: "No unsummarized articles found for the queue." }, { status: 200 });
