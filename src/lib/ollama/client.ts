@@ -4,6 +4,7 @@ import {
   SUMMARIZATION_SYSTEM_PROMPT,
   GROUP_LABEL_SYSTEM_PROMPT,
 } from "./prompts";
+import { getOllamaModelSetting } from "@/lib/db/queries";
 
 const ollama = new Ollama({ host: "http://localhost:11434" });
 
@@ -68,62 +69,61 @@ export async function getAvailableModels(): Promise<string[]> {
 export async function summarizeArticle(
   title: string,
   content: string,
-  model: string = DEFAULT_MODEL,
+  model?: string
 ): Promise<string> {
-  return enqueue(async () => {
-    const available = await isOllamaAvailable();
-    if (!available) {
+  // Determine the model to use: if model is provided, use it; else, try to get from db; else, use default.
+  let modelToUse = model;
+  if (modelToUse === undefined) {
+    const dbModel = await getOllamaModelSetting();
+    modelToUse = dbModel ?? DEFAULT_MODEL;
+  }
+
+  // Truncate content if too long
+  const truncatedContent =
+    content.length > MAX_CONTENT_LENGTH
+      ? content.slice(0, MAX_CONTENT_LENGTH)
+      : content;
+
+  try {
+    const response = await ollama.chat({
+      model: modelToUse,
+      stream: false,
+      messages: [
+        { role: "system", content: SUMMARIZATION_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `Title: ${title}\n\nContent: ${truncatedContent}`,
+        },
+      ],
+      options: {
+        temperature: 0.3,
+        num_predict: 200,
+      },
+    });
+
+    return response.message.content;
+  } catch (e) {
+    const error = e as Error;
+    if (
+      error.message.includes("ECONNREFUSED") ||
+      error.message.includes("fetch failed")
+    ) {
       throw new OllamaUnavailableError(
-        "Ollama is not running or not reachable at http://localhost:11434",
+        "Lost connection to Ollama during summarization"
       );
     }
-
-    const truncatedContent =
-      content.length > MAX_CONTENT_LENGTH
-        ? content.slice(0, MAX_CONTENT_LENGTH)
-        : content;
-
-    try {
-      const response = await ollama.chat({
-        model,
-        stream: false,
-        messages: [
-          { role: "system", content: SUMMARIZATION_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `Title: ${title}\n\nContent: ${truncatedContent}`,
-          },
-        ],
-        options: {
-          temperature: 0.3,
-          num_predict: 200,
-        },
-      });
-
-      return response.message.content;
-    } catch (e) {
-      const error = e as Error;
-      if (
-        error.message.includes("ECONNREFUSED") ||
-        error.message.includes("fetch failed")
-      ) {
-        throw new OllamaUnavailableError(
-          "Lost connection to Ollama during summarization",
-        );
-      }
-      throw error;
-    }
-  });
+    throw error;
+  }
 }
 
 export async function generateGroupLabel(
   titles: string[],
-  model: string = DEFAULT_MODEL,
+  model: string = DEFAULT_MODEL
 ): Promise<string> {
   const available = await isOllamaAvailable();
   if (!available) {
     throw new OllamaUnavailableError(
-      "Ollama is not running or not reachable at http://localhost:11434",
+      "Ollama is not running or not reachable at http://localhost:11434"
     );
   }
 
@@ -149,7 +149,7 @@ export async function generateGroupLabel(
       error.message.includes("fetch failed")
     ) {
       throw new OllamaUnavailableError(
-        "Lost connection to Ollama during label generation",
+        "Lost connection to Ollama during label generation"
       );
     }
     throw error;
