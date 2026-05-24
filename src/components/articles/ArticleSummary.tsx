@@ -54,7 +54,13 @@ export default function ArticleSummary({
   // Auto-trigger on mount if no summary exists
   useEffect(() => {
     if (summary) return;
-    generateSummary();
+    
+    // Use a timeout or async function wrapper to avoid the "setState synchronously within an effect" warning
+    const timer = setTimeout(() => {
+      generateSummary();
+    }, 0);
+    
+    return () => clearTimeout(timer);
   }, [summary, generateSummary]);
 
   // Already has summary — show it

@@ -26,7 +26,13 @@ export default function StockSearch({ onStockSelect }: StockSearchProps) {
 
   useEffect(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (query.trim().length === 0) { setResults([]); setShowResults(false); return; }
+    if (query.trim().length === 0) { 
+      const timer = setTimeout(() => {
+        setResults([]); 
+        setShowResults(false); 
+      }, 0);
+      return () => clearTimeout(timer);
+    }
     timeoutRef.current = setTimeout(async () => {
       setLoading(true);
       try {

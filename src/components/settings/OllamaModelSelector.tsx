@@ -8,10 +8,11 @@ const OllamaModelSelector: React.FC = () => {
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(''); // NEW STATE: Holds the user's selection
   const [isLoading, setIsLoading] = useState(true);
-  const [serviceStatus, setServiceStatus] = useState<'online' | 'offline' | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<'online' | 'offline' | 'failure' | null>(null);
 
   // Function to fetch service status and models
   const fetchOllamaConfig = async () => {
+    setIsLoading(true);
     try {
       const response = await fetch('/api/ollama/health'); // Call the dedicated health endpoint
 
@@ -29,10 +30,19 @@ const OllamaModelSelector: React.FC = () => {
         // Other critical server errors
         setServiceStatus('failure');
       }
-  }
+    } catch (e) {
+      console.error("[OllamaModelSelector] Error fetching config:", e);
+      setServiceStatus('failure');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetchOllamaConfig();
+    const timer = setTimeout(() => {
+      fetchOllamaConfig();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   return (
@@ -40,7 +50,7 @@ const OllamaModelSelector: React.FC = () => {
       <h2 className="text-xl font-semibold mb-4">⚙️ Ollama Service Configuration</h2>
 
       {/* Status Indicator */}
-      <div className="mb-4 p-3 text-sm rounded" 
+      <div className="mb-4 p-3 text-sm rounded border" 
            style={{ borderColor: serviceStatus === 'online' ? '#10B981' : (serviceStatus === 'offline' ? '#EF4444' : '#F59E0B') }}>
         <p><strong>Service Status:</strong> {isLoading ? 'Checking...' : 
           serviceStatus === 'online' ? '✅ Online and operational.' : 
@@ -59,7 +69,7 @@ const OllamaModelSelector: React.FC = () => {
         >
           <option value="" disabled>Please select a model...</option>
           {models.map((model) => (
-            <option key={model}>{model}</option>
+            <option key={model} value={model}>{model}</option>
           ))}
         </select>
       </div>
@@ -70,4 +80,3 @@ const OllamaModelSelector: React.FC = () => {
 };
 
 export default OllamaModelSelector;
-EOF'

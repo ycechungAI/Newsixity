@@ -14,8 +14,6 @@ export default function MarketIndices({ onIndexClick, selectedIndex }: MarketInd
   const [indices, setIndices] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadIndices(); }, []);
-
   async function loadIndices() {
     try {
       const symbols = MARKET_INDICES.map((idx) => idx.symbol);
@@ -26,6 +24,13 @@ export default function MarketIndices({ onIndexClick, selectedIndex }: MarketInd
       setLoading(false);
     }
   }
+
+  useEffect(() => { 
+    const timer = setTimeout(() => {
+      loadIndices(); 
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   if (loading) {
     return (

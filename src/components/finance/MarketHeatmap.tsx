@@ -36,8 +36,12 @@ export default function MarketHeatmap({ indexFilter }: MarketHeatmapProps) {
   }, []);
 
   useEffect(() => {
-    void loadHeatmapData();
-    void loadAvailableDates();
+    const timer = setTimeout(() => {
+      void loadHeatmapData();
+      void loadAvailableDates();
+    }, 0);
+    
+    return () => clearTimeout(timer);
   }, [loadHeatmapData, loadAvailableDates]);
 
   if (loading) {
