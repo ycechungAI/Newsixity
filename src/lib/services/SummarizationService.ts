@@ -1,7 +1,7 @@
 import { getUnsummarizedArticles, updateArticleSummary } from "@/lib/db/queries";
 import type { Article } from "@/types";
 import { summarizeArticle, isOllamaAvailable } from "@/lib/ollama/client";
-import { OllamaUnavailableError } from "@/types";
+import { OllamaUnavailableError, OllamaModelNotFoundError } from "@/types";
 
 // Define the specialized error type for when a user hits their session limit on external AI services.
 export class SessionLimitExceededError extends Error {
@@ -12,7 +12,9 @@ export class SessionLimitExceededError extends Error {
 }
 
 // Default model used for summarization when none is specified
-const DEFAULT_MODEL = "qwen3-coder-next:cloud";
+const DEFAULT_MODEL = "granite4.1:8b";
+// Backup model if default is not available
+const BACKUP_MODEL = "llama3.2";
 
 /**
  * @module SummarizationService
@@ -25,7 +27,7 @@ export class SummarizationService {
   }
 
   /**
-   * Summarize a single article with the given model.
+   * Summarize a single article with the given model, falling back to backup model if needed.
    * @param title Article title
    * @param content Article content
    * @param model Model name to use for summarization
@@ -36,8 +38,18 @@ export class SummarizationService {
     content: string,
     model: string = DEFAULT_MODEL
   ): Promise<string> {
-    // Delegate to the Ollama client which already handles availability, truncation, and errors
-    return summarizeArticle(title, content, model);
+    try {
+      // Delegate to the Ollama client which already handles availability, truncation, and errors
+      return await summarizeArticle(title, content, model);
+    } catch (error) {
+      // If the model is not found, try the backup model
+      if (error instanceof OllamaModelNotFoundError) {
+        console.warn(`[SummarizationService] Model "${model}" not found, falling back to "${BACKUP_MODEL}"`);
+        return await summarizeArticle(title, content, BACKUP_MODEL);
+      }
+      // Re-throw any other errors (including OllamaUnavailableError)
+      throw error;
+    }
   }
 
   /**
