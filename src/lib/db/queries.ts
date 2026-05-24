@@ -1897,3 +1897,32 @@ export function clearAutoPreferences(categorySlug?: string): void {
     db.prepare("DELETE FROM user_preferences WHERE source = 'auto'").run();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Ollama Model Setting (global)
+// ---------------------------------------------------------------------------
+
+export function getOllamaModelSetting(): string | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT keyword FROM user_preferences
+       WHERE category_slug = ? AND keyword = ?`
+    )
+    .get('__global__', 'ollama_model') as { keyword: string } | undefined;
+
+  return row ? row.keyword : null;
+}
+
+export function setOllamaModelSetting(model: string): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO user_preferences (category_slug, keyword, weight, source, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(category_slug, keyword) DO UPDATE SET
+       weight = excluded.weight,
+       source = excluded.source,
+       updated_at = datetime('now')
+    `
+  ).run('__global__', 'ollama_model', 1.0, 'manual');
+}
