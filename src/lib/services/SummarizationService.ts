@@ -1,8 +1,7 @@
-import {
-  getUnsummarizedArticles,
-  updateArticleSummary,
-  Article,
-} from "../db/index"; 
+import { getUnsummarizedArticles, updateArticleSummary } from "@/lib/db/queries";
+import type { Article } from "@/types";
+import { summarizeArticle, isOllamaAvailable } from "@/lib/ollama/client";
+import { OllamaUnavailableError } from "@/types";
 
 // Define the specialized error type for when a user hits their session limit on external AI services.
 export class SessionLimitExceededError extends Error {
@@ -12,6 +11,9 @@ export class SessionLimitExceededError extends Error {
     }
 }
 
+// Default model used for summarization when none is specified
+const DEFAULT_MODEL = "qwen3-coder-next:cloud";
+
 /**
  * @module SummarizationService
  * Manages the state transition and processing flow for all articles that require a summary.
@@ -19,7 +21,38 @@ export class SessionLimitExceededError extends Error {
 export class SummarizationService {
   public static async getCandidates(limit: number = 50, category: string | null = null): Promise<Article[]> {
     console.log("[Service] Fetching uncategorized articles. Limit: " + limit);
-    return getUnsummarizedArticles(limit, category);
+    return getUnsummarizedArticles(limit, category ?? undefined);
+  }
+
+  /**
+   * Summarize a single article with the given model.
+   * @param title Article title
+   * @param content Article content
+   * @param model Model name to use for summarization
+   * @returns The generated summary
+   */
+  public static async summarizeArticle(
+    title: string,
+    content: string,
+    model: string = DEFAULT_MODEL
+  ): Promise<string> {
+    // Delegate to the Ollama client which already handles availability, truncation, and errors
+    return summarizeArticle(title, content, model);
+  }
+
+  /**
+   * Summarize a single article (used by the API route).
+   * @param title Article title
+   * @param textToSummarize Article content
+   * @param model Model name to use (from request or default)
+   * @returns The generated summary
+   */
+  public static async summarizeSingleArticle(
+    title: string,
+    textToSummarize: string,
+    model: string = "llama3.2"
+  ): Promise<string> {
+    return this.summarizeArticle(title, textToSummarize, model);
   }
 
   /**
@@ -50,7 +83,7 @@ export class SummarizationService {
 
         // --- Attempt External LLM Run ---
         const summary = await SummarizationService.summarizeArticle(article.title, article.content); 
-        await dbArticles.Articles.updateSummary(article.id, summary, "llama3.2");
+        await updateArticleSummary(article.id, summary, DEFAULT_MODEL);
         successfulSummaries++;
 
       } catch (e) {
