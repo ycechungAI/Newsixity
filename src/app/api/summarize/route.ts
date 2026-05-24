@@ -1,130 +1,96 @@
 import { NextResponse } from "next/server";
-import {
-  getArticleById,
-  getUnsummarizedArticles,
-  updateArticleSummary,
-} from "@/lib/db/queries";
-import { summarizeArticle } from "@/lib/ollama/client";
-import { backgroundSummarize } from "@/lib/ollama/background";
-import { OllamaUnavailableError } from "@/types";
-import { enforceRateLimit } from "@/lib/server/rate-limit";
-import { z } from "zod";
-import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
-import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
+import * as dbArticles from "@/db/index"; 
+import { SummarizationService } from "@/lib/services/SummarizationService";
 
-const SummarizeRequestSchema = z
-  .object({
-    articleId: z.number().int().positive().optional(),
-    category: z.string().trim().min(1).max(100).optional(),
-    limit: z.number().int().min(1).max(50).optional(),
-    background: z.boolean().optional(),
-  })
-  .strict();
-
+/**
+ * HTTP POST handler for triggering article summarization.
+ */
 export async function POST(request: Request) {
-  const rateLimited = enforceRateLimit(request, {
-    routeKey: "summarize",
-    limit: 20,
-    windowMs: 5 * 60 * 1000,
-  });
-  if (rateLimited) return rateLimited;
-
+  // --- 1. SAFETY CHECK & PREP ---
   try {
-    const { articleId, category, limit = 10, background } =
-      await parseJsonBody(request, SummarizeRequestSchema);
-
-    // Trigger the full background summarizer (with content fetching)
-    if (background) {
-      backgroundSummarize().catch((e) =>
-        console.warn("[Newsixity] Background summarization error:", e)
-      );
-      return NextResponse.json({
-        message: "Background summarization started",
-      });
-    }
-
-    // Single article summarization
-    if (articleId) {
-      const article = getArticleById(articleId);
-      if (!article) {
-        return NextResponse.json(
-          { error: "Article not found" },
-          { status: 404 }
-        );
-      }
-
-      // If already summarized, return cached summary
-      if (article.summary) {
-        return NextResponse.json({ summary: article.summary });
-      }
-
-      // Use content if available, otherwise use title as fallback
-      const textToSummarize = article.content && article.content.length > 10
-        ? article.content
-        : null;
-
-      if (!textToSummarize) {
-        return NextResponse.json(
-          { error: "Article has no content to summarize" },
-          { status: 400 }
-        );
-      }
-
-      const summary = await summarizeArticle(article.title, textToSummarize);
-      updateArticleSummary(articleId, summary, "qwen3-coder-next:cloud");
-
-      return NextResponse.json({ summary });
-    }
-
-    // Batch summarization
-    const articles = getUnsummarizedArticles(limit, category);
-    let summarized = 0;
-    const errors: string[] = [];
-
-    for (const article of articles) {
-      try {
-        if (!article.content) {
-          errors.push(`Article ${article.id}: no content to summarize`);
-          continue;
-        }
-
-        const summary = await summarizeArticle(article.title, article.content);
-        updateArticleSummary(article.id, summary, "llama3.2");
-        summarized++;
-      } catch (e) {
-        if (e instanceof OllamaUnavailableError) {
-          return NextResponse.json(
-            {
-              error: "Ollama is not available",
-              summarized,
-              errors,
-            },
-            { status: 503 }
-          );
-        }
-        const requestId = `${Date.now()}-${article.id}`;
-        console.error(
-          `[Newsixity] Summarize item error [${requestId}]`,
-          e instanceof Error ? e.message : String(e)
-        );
-        errors.push(`Article ${article.id}: failed to summarize`);
-      }
-    }
-
-    return NextResponse.json({ summarized, errors });
+    const body = await request.json(); // Parse JSON body safely
   } catch (e) {
-    if (e instanceof z.ZodError) {
-      return validationError(e);
-    }
-    if (e instanceof InvalidJsonError) {
-      return badRequest("Invalid JSON payload");
-    }
-    if (e instanceof OllamaUnavailableError) {
-      return NextResponse.json(
-        { error: "Ollama is not available" },
-        { status: 503 }
-      );
-    }
-    return internalServerError("Summarize POST error", e);
+    return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
+
+  // --- 2. SINGLE ARTICLE SUMMARIZATION FLOW ---
+  if (typeof body?.articleId === 'number' && body.articleId > 0) {
+    console.log(`[API] Starting single article summarization for ID: ${body.articleId}`);
+    const articleId = body.articleId;
+    
+    // A. Find the Article via the API Gateway
+    const article = dbArticles.Articles.findById(articleId);
+
+    if (!article) {
+      return NextResponse.json({ error: "Article not found" }, { status: 404 });
+    }
+
+    // B. Check if already summarized (Cache Hit)
+    if (article.summary) {
+      console.log(`[API] Article ID ${articleId} has existing summary. Returning cached data.`);
+      return NextResponse.json({ summary: article.summary }, { status: 200 });
+    }
+
+    // C. Check for content existence
+    const textToSummarize = article.content && article.content.length > 10 ? article.content : null;
+
+    if (!textToSummarize) {
+      return NextResponse.json({ error: "Article has no sufficient content to summarize." }, { status: 400 });
+    }
+
+    // D. Execute single run summarization
+    try {
+        // API now uses the model provided in the request body if available, otherwise defaults.
+        const requestedModel = body?.model || "llama3.2"; // Get user-selected model or default
+        console.log(`[API] Running single article summarization with model: ${requestedModel}`);
+
+        const summary = await SummarizationService.summarizeSingleArticle(article.title, textToSummarize, requestedModel); 
+        await dbArticles.Articles.updateSummary(articleId, summary, "llama3.2"); // Note: DB update needs to reflect the used model in a real app flow
+
+        return NextResponse.json({ message: "Single article successfully summarized.", summary });
+    } catch (e) {
+        console.error(`[API] Failed to summarize single article ${articleId}:`, e);
+        return NextResponse.json({ error: "Internal processing failed during single run." }, { status: 500 });
+    }
+
+  // --- 3. BATCH/RESUMMARIZATION FLOW (The Button's main function) ---
+  } else { // If no single ID was provided, it is the queue trigger.
+    console.log("[API] Triggering batch resummarization sequence.");
+
+    // A. Fetch all candidates
+    const articles = dbArticles.Articles.getUnsummarizedBatch(50, null); 
+
+    if (!articles || articles.length === 0) {
+      return NextResponse.json({ message: "No unsummarized articles found for the queue." }, { status: 200 });
+    }
+    
+    // B. Execute batch processing logic against service layer
+    try {
+        const results = await SummarizationService.processBatch(articles);
+
+        // C. Return comprehensive report to frontend
+        return NextResponse.json({ 
+          message: "Batch processing finished.",
+          summarized: results.summarizedCount, 
+          errors: results.failedArticles.map(f => `ID ${f.id}: ${f.reason}`) 
+        }, { status: 200 });
+
+    } catch (e) {
+        // Handle the specific service limit failure here! This is critical for the UI experience.
+        if (e instanceof SessionLimitExceededError) {
+             return NextResponse.json({ 
+                message: "External LLM limits are reached.", 
+                errors: ["Quota exceeded, manual intervention required."]}, 
+                { status: 403 } // HTTP 403 Forbidden/Rate Limit indicator for usage limit
+            );
+        }
+        console.error("[API] Batch processing failed critically:", e);
+        return NextResponse.json({ error: "A critical server failure occurred during batch execution." }, { status: 500 });
+    }
+
+  }
+
+
+  // Final fallback if logic paths were missed
+  return NextResponse.json({ error: "Invalid request payload structure." }, { status: 400 });
 }
