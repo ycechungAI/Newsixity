@@ -28,7 +28,12 @@ export default function StockChart({ symbol }: StockChartProps) {
     }
   }, [symbol, timeframe]);
 
-  useEffect(() => { void loadChart(); }, [loadChart]);
+  useEffect(() => { 
+    const timer = setTimeout(() => {
+      void loadChart(); 
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadChart]);
 
   if (loading) {
     return <div style={{ height: 200, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 11 }}>Loading…</div>;

@@ -22,9 +22,11 @@ export default function SearchResults({ url }: SearchResultsProps) {
 
   useEffect(() => {
     if (!searchInfo) {
-      setLoading(false);
-      setError("Could not parse search query");
-      return;
+      const timer = setTimeout(() => {
+        setLoading(false);
+        setError("Could not parse search query");
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
     // Attempt to fetch and parse search results

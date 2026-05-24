@@ -39,7 +39,11 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
 
   // Load research history on mount
   useEffect(() => {
-    void loadHistory();
+    const timer = setTimeout(() => {
+      void loadHistory();
+    }, 0);
+    
+    return () => clearTimeout(timer);
   }, [loadHistory]);
 
   const handleDeleteHistory = async (researchId: number) => {

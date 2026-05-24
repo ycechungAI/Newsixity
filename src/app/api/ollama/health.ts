@@ -31,4 +31,3 @@ export async function GET() {
     return NextResponse.json({ status: "failure", message: "A critical error occurred while checking service health." }, { status: 500 });
   }
 }
-EOF'
