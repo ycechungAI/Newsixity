@@ -25,6 +25,7 @@ export default function ConsolePage() {
   const [loading, setLoading]       = useState(true);
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
+  const [resummarizing, setResummarizing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +65,31 @@ export default function ConsolePage() {
     } catch { alert("Failed to remove from queue."); }
   }
 
+  async function handleResummarize() {
+    if (!confirm("Resummarize all articles in the queue? This will process the summarization queue.")) return;
+    setResummarizing(true);
+    try {
+      const res = await fetch("/api/summarize", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Resummarization complete!\nSummarized: ${data.summarized}\nErrors: ${data.errors.length}`);
+        // Refresh console data to see updated queue count
+        await loadData();
+      } else {
+        const error = await res.json();
+        alert(`Resummarization failed: ${error.error}`);
+      }
+    } catch (err) {
+      alert("Failed to trigger resummrization.");
+    } finally {
+      setResummarizing(false);
+    }
+  }
+
   async function stopServers() {
     if (!confirm("Stop Ollama and Next.js dev servers?")) return;
     setStopping(true);
@@ -93,6 +119,9 @@ export default function ConsolePage() {
         <span className="console-bar-title">⬛ Console</span>
         <span style={{ flex: 1 }} />
         <button className="con-btn con-btn-green" onClick={loadData}>↺ Refresh</button>
+        <button className="con-btn con-btn-green" onClick={handleResummarize} disabled={resummarizing}>
+          {resummarizing ? "Resummarizing…" : "Resummarize"}
+        </button>
         <button className="con-btn con-btn-blue"  onClick={backupDatabase} disabled={backing}>
           {backing ? "Backing up…" : "Backup DB"}
         </button>

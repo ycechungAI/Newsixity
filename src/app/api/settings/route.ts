@@ -4,11 +4,11 @@ import {
   getAllSettings,
   SettingsEncryptionRequiredError,
 } from "@/lib/db/queries";
+import { getOllamaModelSetting, setOllamaModelSetting } from "@/lib/db/queries";
 import { z } from "zod";
 import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
-import { parseHttpUrl } from "@/lib/utils/url";
-import { enforceRateLimit } from "@/lib/server/rate-limit";
 import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
 
 const SettingsUpdateSchema = z
   .object({
@@ -35,6 +35,9 @@ export async function GET(request: Request) {
 
   try {
     const settings = getAllSettings();
+    const dbModel = getOllamaModelSetting();
+    const effectiveModel = dbModel ?? "granite4.1:8b"; // DEFAULT_MODEL from SummarizationService
+    settings.ollama_model = effectiveModel;
 
     // Mask the API key (show only last 4 chars if exists)
     if (settings.brave_search_api_key) {
@@ -49,7 +52,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       settings: {
         brave_search_api_key: settings.brave_search_api_key || "",
-        ollama_model: settings.ollama_model || "llama3.2",
+        ollama_model: settings.ollama_model || "granite4.1:8b",
         ollama_host: settings.ollama_host || "http://localhost:11434",
       },
     });
@@ -79,7 +82,10 @@ export async function POST(request: Request) {
     }
 
     if (ollama_model !== undefined) {
-      setSetting("ollama_model", ollama_model || "llama3.2");
+      // Save to the user_preferences table (source of truth for the model)
+      setOllamaModelSetting(ollama_model || "granite4.1:8b");
+      // Also update the settings table for consistency (until we rely solely on user_preferences)
+      setSetting("ollama_model", ollama_model || "granite4.1:8b");
     }
 
     if (ollama_host !== undefined) {
