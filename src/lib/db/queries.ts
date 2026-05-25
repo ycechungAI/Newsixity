@@ -1926,3 +1926,18 @@ export function setOllamaModelSetting(model: string): void {
     `
   ).run('__global__', 'ollama_model', 1.0, 'manual');
 }
+
+// ---------------------------------------------------------------------------
+// Reset Failed and Skipped Articles
+// ---------------------------------------------------------------------------
+
+export function resetFailedAndSkippedArticles(): { count: number } {
+  const db = getDb();
+  const result = db.prepare(
+    `UPDATE articles
+     SET summary = NULL, summary_model = NULL
+     WHERE summary LIKE '[Summarization failed:%' 
+        OR summary = '[No content to summarize]'`
+  ).run();
+  return { count: result.changes };
+}
