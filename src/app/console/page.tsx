@@ -26,6 +26,7 @@ export default function ConsolePage() {
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
+  const [resummarizing, setResummarizing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement>(null);
 
@@ -63,6 +64,40 @@ export default function ConsolePage() {
         setQueueCount(c => Math.max(0, c - 1));
       }
     } catch { alert("Failed to remove from queue."); }
+
+  async function handleResummarize() {
+    if (!confirm("This will reset all failed and skipped articles and put them back in the summarization queue. Continue?")) return;
+    setResummarizing(true);
+    try {
+      // Step 1: Reset failed and skipped articles
+      const resetRes = await fetch("/api/console/resummarize-failed", { method: "POST" });
+      if (!resetRes.ok) {
+        const resetError = await resetRes.json();
+        throw new Error(resetError.error || "Failed to reset articles");
+      }
+      const resetData = await resetRes.json();
+      
+      // Step 2: Trigger the summarization queue to process the reset articles (and any others in the queue)
+      const sumRes = await fetch("/api/summarize", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (!sumRes.ok) {
+        const sumError = await sumRes.json();
+        throw new Error(sumError.error || "Summarization failed");
+      }
+      const sumData = await sumRes.json();
+      
+      alert(`Resummarization complete!\n${resetData.message}\nSummarized: ${sumData.summarized}\nErrors: ${sumData.errors.length}`);
+      // Refresh console data to see updated queue count and logs
+      await loadData();
+    } catch (err) {
+      alert(`Failed to trigger resummrization: ${err.message}`);
+    } finally {
+      setResummarizing(false);
+    }
+  }
   }
 
   async function handleResummarize() {
