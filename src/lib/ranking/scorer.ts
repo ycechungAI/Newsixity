@@ -79,8 +79,14 @@ export function scoreArticle(
   const prefScore =
     scorePreferenceMatch(article.title, preferenceKeywords) * 30;
 
-  // Source weight score: 0.5 = 0, 1.0 = 0.5, 2.0 = 1.0
-  const sourceScore = (Math.min(Math.max(sourceWeight, 0.5), 2.0) - 0.5) / 1.5 * 20;
+  // Source weight score: 0.5 = 0, 1.0 = 0.5, 2.0 = 1.0 (piecewise linear around
+  // the neutral 1.0 weight, since 0.5-1.0 and 1.0-2.0 are different-sized ranges)
+  const clampedWeight = Math.min(Math.max(sourceWeight, 0.5), 2.0);
+  const sourceWeightFraction =
+    clampedWeight <= 1.0
+      ? (clampedWeight - 0.5) / 0.5 * 0.5
+      : 0.5 + (clampedWeight - 1.0) / 1.0 * 0.5;
+  const sourceScore = sourceWeightFraction * 20;
 
   // Recency score
   const recencyScore = computeRecencyScore(article.publishedAt) * 10;

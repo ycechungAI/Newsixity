@@ -1613,8 +1613,12 @@ export function createArticlesFromSearchResults(
       ? stripHtml(result.description).slice(0, 8000)
       : null;
 
-    // Use parent hash + index for GUID (matches getSearchResults pattern)
-    const guid = `${parentUrlHash}-${i}`;
+    // Derive GUID from the result's own URL (not its position) so re-running the
+    // same search doesn't collide with / silently drop a different result that
+    // happens to land on the same index. Keeps the "${parentUrlHash}-" prefix
+    // that getSearchResults' LIKE query relies on to find child articles.
+    const resultUrlHash = createHash("sha256").update(safeUrl.toString()).digest("hex").slice(0, 16);
+    const guid = `${parentUrlHash}-${resultUrlHash}`;
 
     const insertResult = db
       .prepare(
@@ -1903,28 +1907,11 @@ export function clearAutoPreferences(categorySlug?: string): void {
 // ---------------------------------------------------------------------------
 
 export function getOllamaModelSetting(): string | null {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT keyword FROM user_preferences
-       WHERE category_slug = ? AND keyword = ?`
-    )
-    .get('__global__', 'ollama_model') as { keyword: string } | undefined;
-
-  return row ? row.keyword : null;
+  return getSetting('ollama_model');
 }
 
 export function setOllamaModelSetting(model: string): void {
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO user_preferences (category_slug, keyword, weight, source, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(category_slug, keyword) DO UPDATE SET
-       weight = excluded.weight,
-       source = excluded.source,
-       updated_at = datetime('now')
-    `
-  ).run('__global__', 'ollama_model', 1.0, 'manual');
+  setSetting('ollama_model', model);
 }
 
 // ---------------------------------------------------------------------------

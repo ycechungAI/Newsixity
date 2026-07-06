@@ -26,7 +26,6 @@ export default function ConsolePage() {
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
-  const [resummarizing, setResummarizing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +63,7 @@ export default function ConsolePage() {
         setQueueCount(c => Math.max(0, c - 1));
       }
     } catch { alert("Failed to remove from queue."); }
+  }
 
   async function handleResummarize() {
     if (!confirm("This will reset all failed and skipped articles and put them back in the summarization queue. Continue?")) return;
@@ -76,10 +76,10 @@ export default function ConsolePage() {
         throw new Error(resetError.error || "Failed to reset articles");
       }
       const resetData = await resetRes.json();
-      
+
       // Step 2: Trigger the summarization queue to process the reset articles (and any others in the queue)
-      const sumRes = await fetch("/api/summarize", { 
-        method: "POST", 
+      const sumRes = await fetch("/api/summarize", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({})
       });
@@ -88,38 +88,13 @@ export default function ConsolePage() {
         throw new Error(sumError.error || "Summarization failed");
       }
       const sumData = await sumRes.json();
-      
+
       alert(`Resummarization complete!\n${resetData.message}\nSummarized: ${sumData.summarized}\nErrors: ${sumData.errors.length}`);
       // Refresh console data to see updated queue count and logs
       await loadData();
     } catch (err) {
-      alert(`Failed to trigger resummrization: ${err.message}`);
-    } finally {
-      setResummarizing(false);
-    }
-  }
-  }
-
-  async function handleResummarize() {
-    if (!confirm("Resummarize all articles in the queue? This will process the summarization queue.")) return;
-    setResummarizing(true);
-    try {
-      const res = await fetch("/api/summarize", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      });
-      if (res.ok) {
-        const data = await res.json();
-        alert(`Resummarization complete!\nSummarized: ${data.summarized}\nErrors: ${data.errors.length}`);
-        // Refresh console data to see updated queue count
-        await loadData();
-      } else {
-        const error = await res.json();
-        alert(`Resummarization failed: ${error.error}`);
-      }
-    } catch (err) {
-      alert("Failed to trigger resummrization.");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      alert(`Failed to trigger resummrization: ${message}`);
     } finally {
       setResummarizing(false);
     }

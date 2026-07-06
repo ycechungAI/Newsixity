@@ -99,11 +99,12 @@ export class SummarizationService {
         successfulSummaries++;
 
       } catch (e) {
-        // Check if the failure is a known state-switchable error
+        // Session-limit failures apply to the whole batch (not just this article), so
+        // abort and let the caller (route handler) surface the dedicated 403 response.
         if (e instanceof SessionLimitExceededError) {
-          // This signals that external AI failed due to user limits and requires human intervention/manual local run.
-          processingErrors.push({ id: article.id, reason: "EXTERNAL LLM FAILED DUE TO SESSION LIMIT. Please trigger a manual local resummarization." });
-        } else if (e instanceof Error) {
+          throw e;
+        }
+        if (e instanceof Error) {
           // Generic runtime error from the LLM call or DB write failure
           processingErrors.push({ id: article.id, reason: `Transient failure during summarization: ${e.message}` });
         }
