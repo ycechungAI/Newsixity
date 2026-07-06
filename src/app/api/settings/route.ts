@@ -9,6 +9,7 @@ import { z } from "zod";
 import { badRequest, internalServerError, validationError } from "@/lib/server/api-response";
 import { InvalidJsonError, parseJsonBody } from "@/lib/server/request";
 import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { parseHttpUrl } from "@/lib/utils/url";
 
 const SettingsUpdateSchema = z
   .object({
@@ -82,10 +83,7 @@ export async function POST(request: Request) {
     }
 
     if (ollama_model !== undefined) {
-      // Save to the user_preferences table (source of truth for the model)
       setOllamaModelSetting(ollama_model || "granite4.1:8b");
-      // Also update the settings table for consistency (until we rely solely on user_preferences)
-      setSetting("ollama_model", ollama_model || "granite4.1:8b");
     }
 
     if (ollama_host !== undefined) {
