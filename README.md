@@ -111,7 +111,7 @@ newsixity/
 │   │   ├── api/                # REST API endpoints
 │   │   ├── article/[id]/       # Article detail page
 │   │   ├── category/[slug]/    # Category feed page
-│   │   ├── finance/            # Finance dashboard
+│   │   ├── finance/            # Finance dashboard + news
 │   │   ├── saved/              # Saved articles
 │   │   ├── settings/           # Settings page
 │   │   ├── console/            # Admin console
@@ -124,6 +124,8 @@ newsixity/
 │   │   └── weather/
 │   ├── lib/                    # Server-side logic
 │   │   ├── db/                 # SQLite connection, schema, queries
+│   │   ├── logger/             # Application logging
+│   │   ├── services/           # Business logic services
 │   │   ├── rss/                # Feed definitions, parsing, scheduling
 │   │   ├── ollama/             # LLM client, summarization, scheduling
 │   │   ├── research/           # Deep research orchestration + search
