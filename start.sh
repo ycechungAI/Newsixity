@@ -63,6 +63,29 @@ else
 fi
 
 echo ""
+
+# Clear the .next build cache if it's stale relative to the installed
+# Next.js version — a mismatched cache causes RSC manifest errors
+# ("Could not find the module ... in the React Client Manifest") that
+# surface as HTTP 500s on every route.
+INSTALLED_NEXT_VERSION=$(node -p "require('./node_modules/next/package.json').version" 2>/dev/null || echo "")
+STAMP_FILE=".next/.newsixity-next-version"
+if [ -d ".next" ]; then
+    CACHED_NEXT_VERSION=$(cat "$STAMP_FILE" 2>/dev/null || echo "")
+    if [ "$CACHED_NEXT_VERSION" != "$INSTALLED_NEXT_VERSION" ]; then
+        echo -e "${YELLOW}⚠ Stale .next cache detected (built with a different Next.js version) — clearing${NC}"
+        # macOS Finder can repopulate .DS_Store mid-delete, making a single
+        # rm -rf report "Directory not empty" — retry a few times rather
+        # than letting `set -e` abort the whole script on a transient race.
+        for _ in 1 2 3; do
+            rm -rf .next 2>/dev/null && break
+        done
+        rm -rf .next || true
+    fi
+fi
+mkdir -p .next
+echo "$INSTALLED_NEXT_VERSION" > "$STAMP_FILE"
+
 echo -e "${BLUE}→ Starting Next.js dev server...${NC}"
 npm run dev &
 NEXT_PID=$!
