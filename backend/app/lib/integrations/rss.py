@@ -6,6 +6,10 @@ from datetime import datetime
 from typing import Optional
 
 import feedparser
+import httpx
+
+FEED_FETCH_TIMEOUT_SECONDS = 15
+FEED_USER_AGENT = "Newsixity/1.0"
 
 
 @dataclass
@@ -40,12 +44,20 @@ def extract_image_from_html(html: str) -> Optional[str]:
 
 
 def fetch_feed(url: str) -> list[ParsedArticle]:
-    """Fetch and parse a single RSS feed."""
-    feed_data = feedparser.parse(
+    """Fetch and parse a single RSS feed.
+
+    feedparser.parse() has no timeout parameter, so we fetch the bytes with
+    httpx (real connect/read timeout + correct User-Agent) and hand the raw
+    content to feedparser. Runs in a worker thread via fetch_all_feeds_sync.
+    """
+    response = httpx.get(
         url,
-        timeout=15,
-        response_headers={"User-Agent": "Newsixity/1.0"},
+        timeout=FEED_FETCH_TIMEOUT_SECONDS,
+        follow_redirects=True,
+        headers={"User-Agent": FEED_USER_AGENT},
     )
+    response.raise_for_status()
+    feed_data = feedparser.parse(response.content)
 
     articles = []
     for entry in feed_data.get("entries", []):
