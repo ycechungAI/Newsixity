@@ -149,14 +149,12 @@ def extract_article_text_fallback(html: str) -> Optional[str]:
 
 async def fetch_article_content(url: str) -> Optional[str]:
     """Fetch and extract article text from URL (HTTP-only, no browser)."""
-    parsed_url = parse_http_url(url)
-    if not parsed_url:
+    safe_url = parse_http_url(url)
+    if not safe_url:
         return None
 
-    if resolves_to_blocked_ip(parsed_url.hostname):
+    if resolves_to_blocked_ip(urlparse(safe_url).hostname):
         return None
-
-    safe_url = parsed_url.geturl()
 
     try:
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT) as client:
