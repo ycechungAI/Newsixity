@@ -76,6 +76,6 @@ async def update_feed_weights(body: FeedWeightUpdateRequestBody) -> dict:
     if body.weight < 0.1 or body.weight > 10.0:
         raise HTTPException(status_code=400, detail="Weight must be between 0.1 and 10.0")
 
-    update_feed_source_weight(body.feed_id, body.weight)
+    update_feed_source_weight(body.feedId, body.weight)
 
-    return {"success": True, "feed_id": body.feed_id, "weight": body.weight}
+    return {"success": True, "feedId": body.feedId, "weight": body.weight}

@@ -26,7 +26,7 @@ export default function ReadToggleToolbar({
       const res = await fetch("/api/articles/mark-all-read", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: categorySlug ?? null }),
+        body: JSON.stringify({ categorySlug: categorySlug ?? null }),
       });
       if (res.ok) {
         const data = await res.json();
