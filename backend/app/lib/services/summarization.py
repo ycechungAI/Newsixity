@@ -6,34 +6,15 @@ from dataclasses import dataclass
 
 from app.db.repository.helpers import Article
 from app.lib.integrations.ollama import (
+    BACKUP_MODEL,
     OllamaModelNotFoundError,
-    get_available_models,
+    get_default_model,
     summarize_article,
 )
-
-BACKUP_MODEL = "llama3.2:3b"
-_cached_default_model: str | None = None
 
 
 class SessionLimitExceededError(Exception):
     pass
-
-
-async def get_default_model() -> str:
-    """Get the first available Ollama model, or fall back to BACKUP_MODEL."""
-    global _cached_default_model
-    if _cached_default_model:
-        return _cached_default_model
-
-    try:
-        models = await get_available_models()
-        if models:
-            _cached_default_model = models[0]
-            return models[0]
-    except Exception:
-        pass
-
-    return BACKUP_MODEL
 
 
 @dataclass
