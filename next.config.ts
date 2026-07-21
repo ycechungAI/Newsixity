@@ -46,6 +46,18 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Dev-only: proxy API calls to the FastAPI backend on :8000, since the
+  // frontend (next dev, :3000) and backend run on separate origins locally.
+  // Ignored (and warned about) by `next build --output export`, where the
+  // built static files are served by FastAPI itself on a single origin.
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://localhost:8000/api/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;
