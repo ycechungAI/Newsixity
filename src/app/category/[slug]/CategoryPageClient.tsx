@@ -23,10 +23,15 @@ function getPerPage(viewMode: ViewMode) {
   return 30;
 }
 
+interface CategoryWithCounts extends Category {
+  total: number;
+  unread: number;
+}
+
 export default function CategoryPageClient({ slug }: { slug: string }) {
   const router = useRouter();
   const [articles, setArticles] = useState<Article[]>([]);
-  const [category, setCategory] = useState<Category | null>(null);
+  const [category, setCategory] = useState<CategoryWithCounts | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultView(slug));
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -44,30 +49,47 @@ export default function CategoryPageClient({ slug }: { slug: string }) {
     }
   }, [slug, router]);
 
+  // Category metadata (name, real total/unread counts) — fetched once per
+  // slug, independent of pagination, since /api/categories already has it.
+  useEffect(() => {
+    if (slug === "weather" || slug === "finance") return;
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((cats: CategoryWithCounts[]) => {
+        setCategory((cats || []).find((c) => c.slug === slug) ?? null);
+      });
+  }, [slug]);
+
+  function handleViewModeChange(mode: ViewMode) {
+    setViewMode(mode);
+    setCurrentPage(1);
+  }
+
+  // The actual page of articles — real server-side offset/limit, not a
+  // client-side slice of some arbitrarily capped fetch. Previously this
+  // fetched limit=1000 and paginated in the browser, which meant every
+  // category with more than 1000 articles showed the same
+  // ceil(1000/30) = 34 pages regardless of its real total.
   useEffect(() => {
     if (slug === "weather" || slug === "finance") return;
 
-    Promise.all([
-      fetch("/api/categories").then((r) => r.json()),
-      fetch(`/api/articles?category=${encodeURIComponent(slug)}&limit=1000`).then((r) =>
-        r.json()
-      ),
-    ])
-      .then(([cats, arts]: [Category[], Article[]]) => {
-        setCategory((cats || []).find((c) => c.slug === slug) ?? null);
+    let cancelled = false;
+    const offset = (currentPage - 1) * perPage;
+    fetch(`/api/articles?category=${encodeURIComponent(slug)}&limit=${perPage}&offset=${offset}`)
+      .then((r) => r.json())
+      .then((arts: Article[]) => {
+        if (cancelled) return;
         setArticles(arts || []);
       })
-      .finally(() => setLoading(false));
-  }, [slug]);
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [slug, currentPage, perPage]);
 
   if (slug === "weather" || slug === "finance") return null;
 
-  const totalPages = Math.max(1, Math.ceil(articles.length / perPage));
-  const paginatedArticles = articles.slice(
-    (currentPage - 1) * perPage,
-    currentPage * perPage
-  );
-  const unreadCount = articles.filter((a) => !a.isRead).length;
+  const totalPages = Math.max(1, Math.ceil((category?.total ?? 0) / perPage));
+  const unreadCount = category?.unread ?? 0;
   const categoryName = category?.name ?? slug;
 
   return (
@@ -83,9 +105,9 @@ export default function CategoryPageClient({ slug }: { slug: string }) {
         </div>
       </div>
 
-      <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+      <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
 
-      {!loading && articles.length === 0 ? (
+      {!loading && (category?.total ?? 0) === 0 ? (
         <EmptyState
           title={`No articles in ${categoryName}`}
           description="Refresh your feeds to get the latest articles in this category."
@@ -99,7 +121,7 @@ export default function CategoryPageClient({ slug }: { slug: string }) {
             onChange={setCurrentPage}
           />
           <ArticleListWithToolbar
-            articles={paginatedArticles}
+            articles={articles}
             viewMode={viewMode}
             categorySlug={slug}
             unreadCount={unreadCount}
