@@ -15,10 +15,12 @@ from ollama import AsyncClient
 from app.db.repository import get_ollama_model_setting, get_setting
 
 DEFAULT_HOST = "http://localhost:11434"
-DEFAULT_SUMMARIZE_MODEL = "qwen3-coder-next:cloud"
 DEFAULT_RESEARCH_MODEL = "llama3.2"
+BACKUP_MODEL = "llama3.2:3b"
 MAX_CONTENT_LENGTH = 3000
 MAX_RESEARCH_ARTICLE_LENGTH = 1500
+
+_cached_default_model: str | None = None
 
 SUMMARIZATION_SYSTEM_PROMPT = (
     'You are a news summarizer. Given a news article title and content, produce a '
@@ -81,11 +83,49 @@ async def get_available_models(host: str | None = None) -> list[str]:
         return []
 
 
+async def get_default_model() -> str:
+    """Resolve the model to summarize with: the stored setting if it's an
+    installed model, else the first installed model, else BACKUP_MODEL.
+
+    Caches the result so repeated calls (one per article in a batch) don't
+    each re-query Ollama's /api/tags.
+    """
+    global _cached_default_model
+    if _cached_default_model:
+        return _cached_default_model
+
+    try:
+        available = await get_available_models()
+    except Exception:
+        available = []
+
+    stored = get_ollama_model_setting()
+    if stored and stored in available:
+        _cached_default_model = stored
+        return stored
+
+    if available:
+        _cached_default_model = available[0]
+        return available[0]
+
+    return BACKUP_MODEL
+
+
+def invalidate_default_model_cache() -> None:
+    """Force the next get_default_model() call to re-resolve from Ollama.
+
+    Call after the user changes the ollama_model setting, so the change
+    takes effect immediately instead of waiting for a process restart.
+    """
+    global _cached_default_model
+    _cached_default_model = None
+
+
 async def summarize_article(title: str, content: str, model: str | None = None) -> str:
     """Summarize a single article, single-flight via a shared lock (matches Node's mutex)."""
     model_to_use = model
     if model_to_use is None:
-        model_to_use = get_ollama_model_setting() or DEFAULT_SUMMARIZE_MODEL
+        model_to_use = await get_default_model()
 
     truncated_content = content[:MAX_CONTENT_LENGTH]
 
@@ -112,10 +152,13 @@ async def summarize_article(title: str, content: str, model: str | None = None) 
             raise
 
 
-async def generate_group_label(titles: list[str], model: str = DEFAULT_SUMMARIZE_MODEL) -> str:
+async def generate_group_label(titles: list[str], model: str | None = None) -> str:
     host = _get_host()
     if not await is_ollama_available(host):
         raise OllamaUnavailableError(f"Ollama is not running or not reachable at {host}")
+
+    if model is None:
+        model = await get_default_model()
 
     try:
         client = AsyncClient(host=host)
