@@ -10,11 +10,10 @@ from app.db.repository import (
     SettingsEncryptionRequiredError,
 )
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
+from app.lib.services.summarization import get_default_model
 from app.schemas import SettingsUpdateRequestBody
 
 router = APIRouter()
-
-DEFAULT_MODEL = "granite4.1:8b"
 
 
 def _mask_api_key(key: str) -> str:
@@ -30,7 +29,7 @@ def _mask_api_key(key: str) -> str:
 async def get_settings() -> dict:
     settings = get_all_settings()
 
-    effective_model = get_ollama_model_setting() or DEFAULT_MODEL
+    effective_model = get_ollama_model_setting() or await get_default_model()
     settings["ollama_model"] = effective_model
 
     api_key = settings.get("brave_search_api_key")
@@ -40,7 +39,7 @@ async def get_settings() -> dict:
     return {
         "settings": {
             "brave_search_api_key": settings.get("brave_search_api_key") or "",
-            "ollama_model": settings.get("ollama_model") or DEFAULT_MODEL,
+            "ollama_model": settings.get("ollama_model") or effective_model,
             "ollama_host": settings.get("ollama_host") or "http://localhost:11434",
         }
     }
@@ -58,7 +57,7 @@ async def update_settings(body: SettingsUpdateRequestBody) -> dict:
                 set_setting("brave_search_api_key", body.brave_search_api_key or None)
 
         if body.ollama_model is not None:
-            set_ollama_model_setting(body.ollama_model or DEFAULT_MODEL)
+            set_ollama_model_setting(body.ollama_model or "")
 
         if body.ollama_host is not None:
             set_setting("ollama_host", body.ollama_host or "http://localhost:11434")
