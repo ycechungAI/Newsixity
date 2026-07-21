@@ -38,6 +38,14 @@ yarn-error.log*
 
 # database
 /data/
+/data_backup_*/
+database.sqlite
+*.db
+*.db-shm
+*.db-wal
+
+# graphify (codebase analysis artifacts)
+/graphify-out/
 
 # typescript
 *.tsbuildinfo
