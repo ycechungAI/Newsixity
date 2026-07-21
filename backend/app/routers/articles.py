@@ -86,7 +86,7 @@ async def update_article(article_id: int, body: dict) -> dict:
                 asyncio.create_task(summarize_article_by_id(article_id))
 
     article = get_article_by_id(article_id)
-    return {"success": True, "category_slug": article.category_slug if article else None}
+    return {"success": True, "categorySlug": article.category_slug if article else None}
 
 
 @router.delete(
@@ -104,7 +104,7 @@ async def delete_article(article_id: int) -> dict:
 
     delete_article_by_id(article_id)
 
-    return {"success": True, "category_slug": existing.category_slug}
+    return {"success": True, "categorySlug": existing.category_slug}
 
 
 @router.get("/articles")
