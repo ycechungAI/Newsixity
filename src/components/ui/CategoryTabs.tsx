@@ -11,9 +11,10 @@ interface CategoryTab {
 
 interface CategoryTabsProps {
   categories: CategoryTab[];
-  activeSlug?: string;
+  activeSlug?: string | null;
   basePath?: string;
   preserveParams?: Record<string, string | undefined>;
+  onSelectCategory?: (slug: string | null) => void;
 }
 
 export default function CategoryTabs({
@@ -21,6 +22,7 @@ export default function CategoryTabs({
   activeSlug,
   basePath = "/",
   preserveParams = {},
+  onSelectCategory,
 }: CategoryTabsProps) {
   const router = useRouter();
 
@@ -37,13 +39,13 @@ export default function CategoryTabs({
   return (
     <div className="toolbar" style={{ marginBottom: 8, overflowX: "auto", flexWrap: "nowrap" }}>
       <button
-        onClick={() => router.push(buildUrl())}
+        onClick={() => onSelectCategory ? onSelectCategory(null) : router.push(buildUrl())}
         className={`tb-btn${!activeSlug ? " active" : ""}`}
       >All</button>
       {categories.map((cat) => (
         <button
           key={cat.slug}
-          onClick={() => router.push(buildUrl(cat.slug))}
+          onClick={() => onSelectCategory ? onSelectCategory(cat.slug) : router.push(buildUrl(cat.slug))}
           className={`tb-btn${activeSlug === cat.slug ? " active" : ""}`}
         >
           {cat.name}

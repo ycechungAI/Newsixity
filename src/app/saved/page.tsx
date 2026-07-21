@@ -1,4 +1,7 @@
-import { getSavedArticles, getSavedArticleCount, getCategories } from "@/lib/db/queries";
+"use client";
+
+import { useEffect, useState } from "react";
+import type { Article, Category } from "@/types";
 import ArticleList from "@/components/articles/ArticleList";
 import type { ViewMode } from "@/components/articles/ArticleList";
 import SavedViewModeToggle from "@/components/ui/SavedViewModeToggle";
@@ -19,30 +22,39 @@ function toArticleListViewMode(mode: SavedViewMode): ViewMode {
   return mode;
 }
 
-export default async function SavedPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string; page?: string; category?: string }>;
-}) {
-  const { view, page: pageParam, category } = await searchParams;
-  const viewMode: SavedViewMode =
-    view === "compact" || view === "list" || view === "categories" || view === "sources" || view === "timeline"
-      ? view
-      : "cards";
-  const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
+export default function SavedPage() {
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [viewMode, setViewMode] = useState<SavedViewMode>("cards");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
   const perPage = getPerPage(viewMode);
 
-  const allCategories = getCategories().map((cat) => ({ ...cat, total: 0, unread: 0 }));
-  const totalSaved = getSavedArticleCount(category);
-  const totalPages = Math.max(1, Math.ceil(totalSaved / perPage));
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/categories").then(r => r.json()),
+      fetch("/api/articles?limit=1000").then(r => r.json()),
+    ])
+      .then(([cats, arts]: [Category[], Article[]]) => {
+        setCategories(cats || []);
+        setArticles((arts || []).filter((a: Article) => a.isSaved));
+      });
+  }, []);
 
-  const articles = getSavedArticles({
-    limit: perPage,
-    offset: (currentPage - 1) * perPage,
-    categorySlug: category,
-  });
+  const filtered = selectedCategory
+    ? articles.filter((a: Article) => a.categorySlug === selectedCategory)
+    : articles;
 
-  const categoryName = category ? (allCategories.find((c) => c.slug === category)?.name ?? category) : null;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const paginatedArticles = filtered.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage
+  );
+
+  const categoryName = selectedCategory
+    ? categories.find((c: Category) => c.slug === selectedCategory)?.name
+    : null;
 
   return (
     <div className="page">
@@ -50,33 +62,36 @@ export default async function SavedPage({
         <div>
           <div className="page-title">Saved</div>
           <div className="page-sub">
-            {totalSaved} bookmarked article{totalSaved !== 1 ? "s" : ""}
+            {filtered.length} bookmarked article{filtered.length !== 1 ? "s" : ""}
             {categoryName && ` in ${categoryName}`}
           </div>
         </div>
-        <SavedViewModeToggle viewMode={viewMode} />
+        <SavedViewModeToggle viewMode={viewMode} onChange={setViewMode} />
       </div>
 
       <CategoryTabs
-        categories={allCategories}
-        activeSlug={category}
-        basePath="/saved"
-        preserveParams={{ view }}
+        categories={categories}
+        activeSlug={selectedCategory}
+        onSelectCategory={setSelectedCategory}
       />
 
-      {articles.length > 0 ? (
+      {paginatedArticles.length > 0 ? (
         <>
-          <Pagination currentPage={currentPage} totalPages={totalPages} searchParams={{ view, category }} />
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onChange={setCurrentPage}
+          />
           <ArticleList
-            articles={articles}
+            articles={paginatedArticles}
             viewMode={toArticleListViewMode(viewMode)}
             emptyMessage="No saved articles"
           />
         </>
       ) : (
         <EmptyState
-          title={category ? `No saved ${category} articles` : "No saved articles"}
-          description={category ? `No bookmarked articles in ${category}.` : "Bookmark articles to find them here."}
+          title={selectedCategory ? `No saved ${selectedCategory} articles` : "No saved articles"}
+          description={selectedCategory ? `No bookmarked articles in ${selectedCategory}.` : "Bookmark articles to find them here."}
         />
       )}
     </div>

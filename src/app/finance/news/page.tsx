@@ -1,14 +1,11 @@
-import type { Metadata } from "next";
+"use client";
+
+import { useEffect, useState } from "react";
+import type { Article } from "@/types";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
-import { getArticlesByCategory, getArticleCountByCategory, getPromotedArticleCount } from "@/lib/db/queries";
 import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
-
-export const metadata: Metadata = {
-  title: "Finance News - Newsixity",
-  description: "Latest financial news from MarketWatch, CNBC, Yahoo Finance, and more",
-};
 
 type ViewMode = "topics" | "compact" | "sources" | "timeline" | "list";
 
@@ -18,29 +15,26 @@ function getPerPage(viewMode: ViewMode) {
   return 30;
 }
 
-export default async function FinanceNewsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ page?: string; view?: string }>;
-}) {
-  const { page: pageParam, view } = await searchParams;
-  const viewMode: ViewMode = (view === "compact" || view === "sources" || view === "timeline" || view === "list") ? view : "topics";
-  const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
+export default function FinanceNewsPage() {
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>("topics");
+  const [currentPage, setCurrentPage] = useState(1);
+
   const perPage = getPerPage(viewMode);
 
-  // Get article count for promoted (top) finance only
-  const counts = getArticleCountByCategory();
-  const financeCount = counts.find(c => c.slug === 'finance');
-  const financeUnread = financeCount?.unread ?? 0;
-  const totalArticles = getPromotedArticleCount("finance");
-  const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
+  useEffect(() => {
+    fetch("/api/articles?limit=1000")
+      .then(r => r.json())
+      .then((data: Article[]) => {
+        setArticles((data || []).filter((a: Article) => a.categorySlug === "finance"));
+      });
+  }, []);
 
-  // Fetch finance articles: only top/priority (promoted) for the financial section
-  const financeArticles = getArticlesByCategory("finance", {
-    limit: perPage,
-    offset: (currentPage - 1) * perPage,
-    promotedOnly: true,
-  });
+  const totalPages = Math.max(1, Math.ceil(articles.length / perPage));
+  const paginatedArticles = articles.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage
+  );
 
   return (
     <div className="p-6">
@@ -54,17 +48,17 @@ export default async function FinanceNewsPage({
       </div>
 
       <div className="mb-4 flex items-center justify-end">
-        <ViewModeToggle viewMode={viewMode} />
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
       </div>
 
-      {financeArticles.length > 0 ? (
+      {paginatedArticles.length > 0 ? (
         <>
-          <Pagination currentPage={currentPage} totalPages={totalPages} />
+          <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
           <ArticleListWithToolbar
-            articles={financeArticles}
+            articles={paginatedArticles}
             viewMode={viewMode}
             categorySlug="finance"
-            unreadCount={financeUnread}
+            unreadCount={articles.filter((a: Article) => !a.isRead).length}
             emptyMessage="No finance articles yet"
           />
         </>

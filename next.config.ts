@@ -37,6 +37,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: "export",
   serverExternalPackages: ["better-sqlite3"],
   async headers() {
     return [

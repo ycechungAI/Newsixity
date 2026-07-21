@@ -1,90 +1,53 @@
-import { getArticleGroupsByCategory, getArticlesByCategory, getArticleCountByCategory, searchArticles } from "@/lib/db/queries";
+"use client";
+
+import { useEffect, useState } from "react";
+import type { Article } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
 import Pagination from "@/components/ui/Pagination";
 
 type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
 
-function getPerPage(viewMode: ViewMode) {
-  if (viewMode === "list") return 200;
-  if (viewMode === "compact") return 50;
-  return 30;
-}
+export default function HomePage() {
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>("topics");
+  const [currentPage, setCurrentPage] = useState(1);
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ search?: string; category?: string; view?: string; page?: string }>;
-}) {
-  const params = await searchParams;
-  const { search, category, view, page: pageParam } = params;
-  const viewMode: ViewMode = (["cards", "compact", "sources", "timeline", "list"].includes(view ?? ""))
-    ? (view as ViewMode)
-    : "topics";
-  const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
-  const perPage = getPerPage(viewMode);
+  const perPage = viewMode === "list" ? 200 : viewMode === "compact" ? 50 : 30;
 
-  const counts = getArticleCountByCategory();
-  const filteredCounts = category ? counts.filter(c => c.slug === category) : counts;
-  const totalUnread  = filteredCounts.reduce((s, c) => s + c.unread, 0);
-  const totalArticles = filteredCounts.reduce((s, c) => s + c.total, 0);
-  const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
-
-  let articles = null;
-  let groups   = null;
-
-  if (search) {
-    articles = searchArticles(search, { category, limit: 50 });
-  } else {
-    if (viewMode === "topics" && currentPage === 1) {
-      groups = getArticleGroupsByCategory(category || null, { limit: perPage, promotedOnly: false });
-    }
-    if (viewMode !== "topics" || !groups || groups.length === 0) {
-      articles = getArticlesByCategory(category || null, {
-        limit: perPage,
-        offset: (currentPage - 1) * perPage,
-        promotedOnly: false,
+  useEffect(() => {
+    fetch("/api/articles?limit=1000")
+      .then(r => r.json())
+      .then((data: Article[]) => {
+        setArticles(data || []);
       });
-    }
-  }
+  }, []);
 
-  const hasContent = (articles && articles.length > 0) || (groups && groups.length > 0);
-
-  const title = search
-    ? `Search: "${search}"`
-    : category
-    ? category.charAt(0).toUpperCase() + category.slice(1).replace(/-/g, " ")
-    : "Discover";
-
-  const sub = search
-    ? `${articles?.length ?? 0} results`
-    : category
-    ? `${category} articles`
-    : "Latest from all feeds";
+  const totalArticles = articles.length;
+  const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
+  const paginatedArticles = articles.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage
+  );
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <div className="page-title">{title}</div>
-          <div className="page-sub">{sub}</div>
+          <div className="page-title">Discover</div>
+          <div className="page-sub">Latest from all feeds</div>
         </div>
       </div>
 
-      {!search && (
-        <ViewModeToggle viewMode={viewMode} searchParams={params} />
-      )}
+      <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
 
-      {hasContent ? (
+      {articles.length > 0 ? (
         <>
-          {!search && (
-            <Pagination currentPage={currentPage} totalPages={totalPages} searchParams={params} />
-          )}
+          <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
           <ArticleListWithToolbar
-            articles={articles ?? undefined}
-            groups={groups && groups.length > 0 ? groups : undefined}
+            articles={paginatedArticles}
             viewMode={viewMode}
-            unreadCount={totalUnread}
+            unreadCount={articles.filter((a: Article) => !a.isRead).length}
           />
         </>
       ) : (
