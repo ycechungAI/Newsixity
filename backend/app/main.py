@@ -14,6 +14,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 
 from app.config import settings
 from app.db import init_db
@@ -108,16 +110,60 @@ app.include_router(console.router, prefix="/api", tags=["console"])
 # Serve static frontend built by Next.js static export (Stage 8).
 # The 'out/' directory contains the pre-built SPA (HTML, JS, CSS, images).
 static_dir = Path(__file__).parent.parent.parent / "out"
+
+
+class NextExportStaticFiles(StaticFiles):
+    """StaticFiles that serves Next.js static-export clean URLs.
+
+    Next `output: "export"` writes one HTML file per route (``finance.html``,
+    ``finance/news.html``), but the app links to *extensionless* URLs
+    (``/finance``, ``/finance/news``). Plain StaticFiles 404s those. This
+    subclass mirrors what Next's own server / Vercel / nginx `try_files` do:
+
+        1. exact path (assets: JS/CSS/images, and ``/`` -> index.html via html=True)
+        2. ``{path}.html``  (clean-URL page: ``/finance`` -> ``finance.html``)
+        3. ``404.html``     (Next's exported not-found page), status 404
+    """
+
+    async def _try(self, path: str, scope) -> Response | None:
+        """Return a served response, or None if the path is missing.
+
+        In html=True mode Starlette *returns* a synthesized 404 (serving
+        404.html) rather than raising, so a 404 status also counts as a miss.
+        """
+        try:
+            resp = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        return None if resp.status_code == 404 else resp
+
+    async def get_response(self, path: str, scope) -> Response:
+        # 1. Exact path (assets, and "/" -> index.html via html=True).
+        resp = await self._try(path, scope)
+        if resp is not None:
+            return resp
+
+        # 2. Clean-URL page: "/finance" -> "finance.html".
+        if path not in ("", ".", "/") and not path.endswith(".html"):
+            resp = await self._try(f"{path}.html", scope)
+            if resp is not None:
+                return resp
+
+        # 3. Exported 404 page, with a real 404 status.
+        not_found = await super().get_response("404.html", scope)
+        not_found.status_code = 404
+        return not_found
+
+
 if static_dir.is_dir():
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    app.mount("/", NextExportStaticFiles(directory=static_dir, html=True), name="static")
 else:
     # Fallback: show a message if frontend build is missing.
     @app.get("/{path:path}")
     async def fallback_to_index(_path: str):
-        """SPA fallback: serve index.html for any unmatched route (client-side routing)."""
-        index_html = static_dir.parent / ".next" / "export" / "index.html"
-        if index_html.is_file():
-            return FileResponse(index_html, media_type="text/html")
+        """Serve a helpful error if the frontend has not been built yet."""
         return JSONResponse(
             {"error": "Frontend not built. Run: npm run build"},
             status_code=503,
