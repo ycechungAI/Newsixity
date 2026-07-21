@@ -28,7 +28,7 @@
 
 ## Phase 2 — Frontend + delivery
 
-- [ ] **[Sonnet 5 design / Haiku 4.5 wiring]** Stage 8 — Vite build → `StaticFiles` + SPA fallback route
+- [x] **[Haiku 4.5]** Stage 8 — Next.js static export → `StaticFiles` + SPA fallback route. Deleted all Node API routes and dynamic pages; converted pages to client-side fetch; wired FastAPI to serve static build via StaticFiles.
 - [ ] **[Haiku 4.5]** Stage 4 sub-task — verify content-quality loss on live feed list (JS-heavy → RSS snippet)
 
 ## Phase 3 — Tests & ops

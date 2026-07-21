@@ -1,9 +1,9 @@
-# FastAPI Backend Migration — Stages 0–7 Summary
+# FastAPI Backend Migration — Stages 0–8 Summary
 
 **Project:** Newsixity (Node.js/Next.js → Python/FastAPI)  
-**Status:** Stages 0–7: 100% complete (24/24 API endpoints live, security middleware + background schedulers in place)  
-**Target completion:** Stage 8–10 (Sonnet/Opus)  
-**Deployed footprint:** On track for ~200–300 MB (no Node, no Chromium, pure Python)
+**Status:** Stages 0–8: 100% complete (24/24 API endpoints live, security middleware + background schedulers, static frontend SPA)  
+**Target completion:** Stage 9–10 (tests + Docker)  
+**Deployed footprint:** On track for ~200–300 MB (no Node, no Chromium, pure Python + static HTML/JS)
 
 ---
 
@@ -163,6 +163,33 @@ priority, per-category daily insert cap, fuzzy dedup, `RefreshResult` body) is a
 router port still stubbed — the scheduler's `refresh_all_feeds` is the simpler `refreshAllFeeds`
 path. Tracked as a follow-up.
 
+### Stage 8: Frontend (Static Export SPA) ✅ (Haiku 4.5)
+
+**Frontend refactor:** Next.js app converted to static export (`output: "export"` in next.config.ts).
+All pages refactored to client-side data fetching from `/api/*` (no server-side rendering at build time).
+
+**Deleted:**
+- All 24 Node API routes (`src/app/api/*`)
+- Dynamic page routes (`/article/[id]`, `/category/[slug]`)
+
+**Refactored to client-side:**
+- `layout.tsx` — fetches categories + article counts on mount
+- `page.tsx` (home) — fetches articles, sorts by view mode, paginates
+- `saved/page.tsx` — fetches categories + saved articles, filters by slug
+- `finance/news/page.tsx` — fetches finance articles only
+- UI components (ViewModeToggle, SavedViewModeToggle, Pagination, CategoryTabs) — now accept
+  `onChange` callbacks for in-memory state management or preserve URL routing (backward compatible)
+
+**Backend wiring:** `backend/app/main.py` mounts `StaticFiles(directory=out/)` at "/" after
+all `/api/*` routers. Unmatched paths fall through to the mount, which serves the SPA shell (index.html)
+for client-side routing to handle `/article/:id`, `/category/:slug`, etc.
+
+**Build:** `npm run build` generates `out/` directory with pre-built HTML/JS/CSS/images (1.1 MB
+uncompressed). FastAPI serves the static files + provides `/api/*` backend.
+
+**Verified:** Backend imports OK (26 OpenAPI paths); all routes respond with correct shapes (endpoints +
+static SPA). No runtime regressions.
+
 ---
 
 ## Statistics
@@ -209,11 +236,17 @@ path. Tracked as a follow-up.
 - ✅ Supporting ports: ranking scorer + promoter, feed seeding, stuck-task cleanup
 - ⚠️ Follow-up: rich `POST /api/feeds/refresh` endpoint algorithm still stubbed (Stage 5 gap)
 
-**To Sonnet/Opus (Stage 8–10):**
-- Vite build + StaticFiles serving + SPA fallback route
+**Stage 8 (Haiku) — DONE:**
+- ✅ Next.js static export (`output: "export"`)
+- ✅ All pages refactored to client-side fetch from `/api/*`
+- ✅ Deleted all Node API routes and dynamic page routes
+- ✅ FastAPI StaticFiles mount + SPA fallback route at "/"
+- ✅ UI components updated to support onChange callbacks (in-memory state)
+
+**To Sonnet/Opus (Stage 9–10):**
 - pytest test suite (basic, database, security)
-- Multi-stage Docker build
-- Old-vs-new parity sign-off
+- Multi-stage Docker build (Node build-time only, pure Python runtime)
+- Old-vs-new parity sign-off (Opus)
 
 ---
 
@@ -237,6 +270,8 @@ path. Tracked as a follow-up.
 - **Commit 09055ae** — Stage 6 (Opus): auth + rate-limit middleware (`lib/server/{auth,rate_limit}.py`),
   global `/api/*` access gate, per-route rate-limit dependencies on 30 routes
 - **Commit 3b4a578** — Fix `/api/categories` 500: dict access on count rows
+- **Commit fac9316** — Stage 7 (Opus): APScheduler background jobs (RSS/summarize/backup), scoring/seeding, SQLite backup
+- **Commit 2ae7e77** — Stage 8 (Haiku): Next.js static export, client-side pages, StaticFiles mount + SPA fallback
 - **(this commit)** — Stage 7 (Opus): APScheduler background jobs (`lib/scheduler/`) for RSS
   refresh, summarization, and daily backup; supporting ranking scorer/promoter, feed seeding,
   and stuck-task cleanup; lifespan + articles on-save wiring
