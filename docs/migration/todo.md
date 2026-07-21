@@ -33,7 +33,7 @@
 
 ## Phase 3 — Tests & ops
 
-- [ ] **[Haiku 4.5]** Stage 9 — port tests to pytest; **Sonnet 5** for `tests/security`
+- [~] **[Haiku 4.5]** Stage 9 — port tests to pytest; **Sonnet 5** for `tests/security` (Haiku: 153 tests passing; Sonnet: pending)
 - [ ] **[Sonnet 5 / Opus 4.8]** Stage 10 — Sonnet: Dockerfile + start/stop scripts · Opus: old-vs-new parity sign-off
 
 ## Phase 4 — Slimming (can run in parallel; see Improvements.md)
