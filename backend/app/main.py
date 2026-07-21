@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.db import init_db
 from app.lib.logger.console import install_console_interceptor
+from app.lib.scheduler import start_background_services, stop_background_services
 from app.lib.server import RateLimitExceeded, check_api_access
 
 logging.basicConfig(level=logging.INFO)
@@ -30,12 +31,14 @@ async def lifespan(_app: FastAPI):
     if settings.disable_background_services:
         logger.info("Background services disabled by config.")
     else:
-        # Stage 7: start RSS refresh, summarization, and backup schedulers here
-        # (APScheduler), replacing src/lib/server/background-services.ts.
-        logger.info("Background services slot ready (schedulers wired in Stage 7).")
+        # RSS refresh, summarization, and backup schedulers (APScheduler),
+        # replacing src/lib/server/background-services.ts.
+        start_background_services()
 
     yield
 
+    if not settings.disable_background_services:
+        stop_background_services()
     logger.info("Shutting down.")
 
 

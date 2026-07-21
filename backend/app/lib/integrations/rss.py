@@ -133,8 +133,13 @@ class FeedResult:
     error: Optional[str] = None
 
 
-async def fetch_all_feeds() -> list[FeedResult]:
-    """Fetch all enabled feeds, with batch concurrency limit."""
+def fetch_all_feeds_sync() -> list[FeedResult]:
+    """Fetch all enabled feeds (blocking).
+
+    ``feedparser.parse`` performs synchronous network I/O, so the background RSS
+    refresh runs this via ``asyncio.to_thread`` to avoid stalling the event loop.
+    The async wrapper below preserves the original API for request handlers.
+    """
     from app.db.repository.feeds import update_feed_last_fetched, update_feed_last_error
     from app.db.repository import get_enabled_feeds
 
@@ -165,3 +170,8 @@ async def fetch_all_feeds() -> list[FeedResult]:
                 )
 
     return results
+
+
+async def fetch_all_feeds() -> list[FeedResult]:
+    """Fetch all enabled feeds, with batch concurrency limit."""
+    return fetch_all_feeds_sync()
