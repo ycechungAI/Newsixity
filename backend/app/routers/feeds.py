@@ -1,10 +1,15 @@
 """Feeds endpoints — /api/feeds/*."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from typing import Optional
 
-from app.db.repository import get_all_feeds, update_feed_source_weight
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.db.repository import get_all_feeds, update_feed_source_weight, CAPPED_CATEGORIES
 from app.schemas import Feed, FeedWeightUpdateRequestBody
 from app.lib.integrations import fetch_all_feeds
+from app.lib.scheduler.refresh import _run_feed_refresh_sync
+from app.lib.scheduler.summarizer import background_summarize
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 
 router = APIRouter()
@@ -25,28 +30,41 @@ async def list_feeds() -> list[Feed]:
     "/feeds/refresh",
     dependencies=[Depends(rate_limit("feeds-refresh", 6, TEN_MIN_MS))],
 )
-async def refresh_feeds() -> dict:
-    """Trigger RSS feed refresh (async background job).
+async def refresh_feeds(category: Optional[str] = Query(None)) -> dict:
+    """Trigger RSS feed refresh with optional category filter.
 
-    Stage 7: This will be wired to APScheduler for true background execution.
-    For now, a fire-and-forget coroutine.
+    Implements the full Node algorithm: finance-priority sorting,
+    per-category daily caps, exact+fuzzy dedup, grouping, and promotion.
+    Returns {refreshed, newArticles, errors} matching the Node RefreshResult.
+    Fires background summarization after completion (fire-and-forget).
     """
-    # Async RSS fetch (Stage 7: integrated into background scheduler)
-    import asyncio
+    if category and category not in CAPPED_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid category. Must be one of: {', '.join(CAPPED_CATEGORIES)}",
+        )
 
-    async def background_refresh():
+    # Run the full refresh algorithm synchronously (blocking in thread pool)
+    try:
+        refreshed, new_articles, errors = await asyncio.to_thread(
+            _run_feed_refresh_sync, category
+        )
+    except Exception as e:
+        import logging
+        logging.error("[Newsixity] Feed refresh error: %s", e)
+        return {"refreshed": 0, "newArticles": 0, "errors": [f"Internal error: {e}"]}
+
+    # Fire-and-forget background summarization after refresh completes (matches Node)
+    async def fire_summarize():
         try:
-            results = await fetch_all_feeds()
-            # Process articles and upsert to DB (Stage 5 continuation)
-            # For now, just return results
-            return {"refreshed": len([r for r in results if not r.error])}
+            await background_summarize(10)
         except Exception as e:
-            return {"error": str(e)}
+            import logging
+            logging.warning("[Newsixity] Background summarization error: %s", e)
 
-    # Fire-and-forget (Stage 7: proper scheduler integration)
-    asyncio.create_task(background_refresh())
+    asyncio.create_task(fire_summarize())
 
-    return {"status": "refresh started"}
+    return {"refreshed": refreshed, "newArticles": new_articles, "errors": errors}
 
 
 @router.put(
