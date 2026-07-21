@@ -1,8 +1,8 @@
-# FastAPI Backend Migration — Stages 0–5 Summary
+# FastAPI Backend Migration — Stages 0–6 Summary
 
 **Project:** Newsixity (Node.js/Next.js → Python/FastAPI)  
-**Status:** Stages 0–5: 100% complete (24/24 API endpoints live)  
-**Target completion:** Stage 6–7 (Opus), Stage 8–10 (Sonnet/Opus)  
+**Status:** Stages 0–6: 100% complete (24/24 API endpoints live, security middleware in place)  
+**Target completion:** Stage 7 (Opus), Stage 8–10 (Sonnet/Opus)  
 **Deployed footprint:** On track for ~200–300 MB (no Node, no Chromium, pure Python)
 
 ---
@@ -90,6 +90,36 @@
 **Result:** 24/24 endpoints live in OpenAPI spec; smoke-tested against the real 47,273-article
 production DB (health, settings, preferences, console, articles all returned correct live data).
 
+### Stage 6: Auth, Rate-Limit & Middleware ✅ COMPLETE (Opus 4.8)
+
+Ports `src/lib/server/{auth,rate-limit}.ts` and `src/proxy.ts` into
+`backend/app/lib/server/`, preserving Node's exact security semantics.
+
+**Auth** (`lib/server/auth.py`) — a global ASGI middleware (`app.main.api_access_middleware`)
+runs `check_api_access` over every `/api/*` request except the public `/api/health`,
+mirroring Next's middleware/proxy:
+- **Loopback trust:** requests whose `Host` normalizes to `localhost`/`127.0.0.1`/`::1`
+  are trusted without a token; if `x-forwarded-for` is present its first hop must be a
+  loopback IP (IPv4, `::1`, or `::ffff:127.*`).
+- **Token auth** (outside local mode): `NEWSIXITY_ADMIN_TOKEN` / `NEWSIXITY_API_TOKEN`
+  compared via constant-time `hmac.compare_digest`; token read from `Authorization: Bearer`
+  or `x-newsixity-token`. Admin paths (`/api/console`, `/api/settings`, `/api/feeds/refresh`,
+  `/api/feeds/weights`, `/api/summarize`, `/api/preferences`) always require the admin token.
+- **CSRF/origin:** mutating methods are rejected 403 on cross-site `sec-fetch-site` or on
+  `Origin` host mismatch, regardless of how they later authenticate.
+
+**Rate limiting** (`lib/server/rate_limit.py`) — a per-route fixed-window limiter attached as
+`Depends(rate_limit(routeKey, limit, windowMs))` on each route, mirroring Node's per-handler
+`enforceRateLimit` calls (30 rate-limited routes; `/api/{health,categories,summarize,ollama/models}`
+intentionally unlimited, matching the Node source). In-process bucket store with the same
+5,000-bucket cap + stale/oldest eviction as Node's `Map`. A `RateLimitExceeded` exception +
+central handler reproduce Node's `{"error":"Rate limit exceeded","retryAfter":N}` body and
+`Retry-After` header (FastAPI's `HTTPException` would otherwise nest the body under `detail`).
+
+**Verified end-to-end** (FastAPI `TestClient`): local-mode allow/deny (including loopback vs
+public `x-forwarded-for`), token-mode (admin vs api token, admin-path gating), mutating CSRF +
+origin 403s, and rate-limit 429 parity (30 requests pass, #31 blocked with `retryAfter:600`).
+
 ---
 
 ## Statistics
@@ -126,11 +156,13 @@ production DB (health, settings, preferences, console, articles all returned cor
 
 ## Handoff Summary
 
-**To Opus (Stage 6–7):**
-- Auth middleware (loopback trust from Node app)
-- Rate-limit middleware (240–60 req/10min per endpoint)
+**Stage 6 (Opus) — DONE:**
+- ✅ Auth middleware (loopback trust + token auth + CSRF/origin)
+- ✅ Per-route fixed-window rate limiting (matching Node's routeKey/limit/window table)
+
+**To Opus (Stage 7):**
 - APScheduler integration for RSS refresh, summarization, backup jobs
-- Concurrency guards (asyncio locks)
+- Concurrency guards (asyncio locks) — run-once-per-process, no pile-up
 
 **To Sonnet/Opus (Stage 8–10):**
 - Vite build + StaticFiles serving + SPA fallback route
@@ -155,14 +187,17 @@ production DB (health, settings, preferences, console, articles all returned cor
 - **Commit 0b9dba4** — Stages 0–3: scaffolding, database, repository, schemas, utilities
 - **Commit c6e4a9b** — Stage 4–5 (Haiku): RSS/content/search integrations, 4 routers
 - **Commit b778bb6** — Working tree sync (deps, cache, DB state, tooling)
-- **(this commit)** — Stage 4–5 (Sonnet): yfinance + Ollama integrations, remaining 10 routers,
+- **Commit 9341033** — Stage 4–5 (Sonnet): yfinance + Ollama integrations, remaining 10 routers,
   all 24/24 endpoints complete
+- **(this commit)** — Stage 6 (Opus): auth + rate-limit middleware (`lib/server/{auth,rate_limit}.py`),
+  global `/api/*` access gate, per-route rate-limit dependencies on 30 routes
 
 ---
 
 ## Next Immediate Action
 
-**Opus:** Stage 6 — auth (loopback trust) + rate-limit middleware, then Stage 7 (APScheduler
-background jobs). All 24 API endpoints are operational; this is the last gate before wiring the
-frontend build (Stage 8).
+**Opus:** Stage 7 — APScheduler background jobs (RSS refresh, summarization, backup) with
+asyncio concurrency guards, replacing `src/lib/server/background-services.ts`. All 24 API
+endpoints are operational and now gated by auth + rate limiting; Stage 7 is the last backend
+gate before wiring the frontend build (Stage 8).
 
