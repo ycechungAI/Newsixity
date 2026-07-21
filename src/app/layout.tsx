@@ -1,37 +1,59 @@
-import type { Metadata } from "next";
+"use client";
+
 import "./globals.css";
+import type { Article, Category } from "@/types";
 import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
 import ThemeProvider from "@/components/ThemeProvider";
-import { getCategories, getArticleCountByCategory } from "@/lib/db/queries";
-import { ensureBackgroundServicesStarted } from "@/lib/server/background-services";
+import { useEffect, useState } from "react";
 
-export const metadata: Metadata = {
-  title: "Newsixity",
-  description: "AI-powered news aggregator",
-};
+interface CategoryWithCounts extends Category {
+  total: number;
+  unread: number;
+}
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  ensureBackgroundServicesStarted();
+  const [categories, setCategories] = useState<CategoryWithCounts[]>([]);
 
-  const categories = getCategories();
-  const counts = getArticleCountByCategory();
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/categories").then(r => r.json()),
+      fetch("/api/articles?limit=1000").then(r => r.json()),
+    ])
+      .then(([cats, articles]: [Category[], Article[]]) => {
+        const counts = new Map<string, { total: number; unread: number }>();
+        (cats || []).forEach((cat: Category) => {
+          counts.set(cat.slug, { total: 0, unread: 0 });
+        });
+        (articles || []).forEach((art: Article) => {
+          const entry = counts.get(art.categorySlug);
+          if (entry) {
+            entry.total++;
+            if (!art.isRead) entry.unread++;
+          }
+        });
 
-  const categoriesWithCounts = categories.map((cat) => {
-    const count = counts.find((c) => c.slug === cat.slug);
-    return { ...cat, total: count?.total ?? 0, unread: count?.unread ?? 0 };
-  });
+        const withCounts: CategoryWithCounts[] = (cats || []).map((cat: Category) => {
+          const c = counts.get(cat.slug) || { total: 0, unread: 0 };
+          return {
+            ...cat,
+            ...c,
+          };
+        });
+        setCategories(withCounts);
+      });
+  }, []);
 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
         <ThemeProvider>
           <div className="layout">
-            <Sidebar categories={categoriesWithCounts} />
+            <Sidebar categories={categories} />
             <div className="main">
               <TopBar />
               {children}

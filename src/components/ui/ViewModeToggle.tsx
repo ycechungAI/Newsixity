@@ -14,6 +14,7 @@ type ViewMode =
 interface ViewModeToggleProps {
   viewMode: ViewMode;
   searchParams?: Record<string, string | undefined>;
+  onChange?: (mode: ViewMode) => void;
 }
 
 const MODES: { value: ViewMode; label: string }[] = [
@@ -42,19 +43,30 @@ function buildHref(
 export default function ViewModeToggle({
   viewMode,
   searchParams = {},
+  onChange,
 }: ViewModeToggleProps) {
   const pathname = usePathname();
 
   return (
     <div className="toolbar">
       {MODES.map((m) => (
-        <Link
-          key={m.value}
-          href={buildHref(m.value, searchParams, pathname || "/")}
-          className={`tb-btn${viewMode === m.value ? " active" : ""}`}
-        >
-          {m.label}
-        </Link>
+        onChange ? (
+          <button
+            key={m.value}
+            onClick={() => onChange(m.value)}
+            className={`tb-btn${viewMode === m.value ? " active" : ""}`}
+          >
+            {m.label}
+          </button>
+        ) : (
+          <Link
+            key={m.value}
+            href={buildHref(m.value, searchParams, pathname || "/")}
+            className={`tb-btn${viewMode === m.value ? " active" : ""}`}
+          >
+            {m.label}
+          </Link>
+        )
       ))}
     </div>
   );

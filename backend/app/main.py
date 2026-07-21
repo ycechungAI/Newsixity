@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.db import init_db
@@ -101,3 +103,22 @@ app.include_router(ollama.router, prefix="/api", tags=["ollama"])
 app.include_router(research.router, prefix="/api", tags=["research"])
 app.include_router(summarize.router, prefix="/api", tags=["summarize"])
 app.include_router(console.router, prefix="/api", tags=["console"])
+
+
+# Serve static frontend built by Next.js static export (Stage 8).
+# The 'out/' directory contains the pre-built SPA (HTML, JS, CSS, images).
+static_dir = Path(__file__).parent.parent.parent / "out"
+if static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+else:
+    # Fallback: show a message if frontend build is missing.
+    @app.get("/{path:path}")
+    async def fallback_to_index(_path: str):
+        """SPA fallback: serve index.html for any unmatched route (client-side routing)."""
+        index_html = static_dir.parent / ".next" / "export" / "index.html"
+        if index_html.is_file():
+            return FileResponse(index_html, media_type="text/html")
+        return JSONResponse(
+            {"error": "Frontend not built. Run: npm run build"},
+            status_code=503,
+        )

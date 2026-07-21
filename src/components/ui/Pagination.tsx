@@ -7,6 +7,7 @@ interface PaginationProps {
   currentPage: number;
   totalPages: number;
   searchParams?: Record<string, string | undefined>;
+  onChange?: (page: number) => void;
 }
 
 function buildHref(page: number, current: Record<string, string | undefined>, pathname: string): string {
@@ -20,7 +21,7 @@ function buildHref(page: number, current: Record<string, string | undefined>, pa
   return qs ? `${pathname}?${qs}` : pathname;
 }
 
-export default function Pagination({ currentPage, totalPages, searchParams = {} }: PaginationProps) {
+export default function Pagination({ currentPage, totalPages, searchParams = {}, onChange }: PaginationProps) {
   const pathname = usePathname();
   if (totalPages <= 1) return null;
 
@@ -31,15 +32,34 @@ export default function Pagination({ currentPage, totalPages, searchParams = {} 
 
   const path = pathname || "/";
 
+  const renderButton = (page: number, label: React.ReactNode, isDisabled = false) => {
+    if (onChange && !isDisabled) {
+      return (
+        <button
+          onClick={() => onChange(page)}
+          className="pg-btn"
+        >
+          {label}
+        </button>
+      );
+    }
+    if (isDisabled) {
+      return <span className="pg-btn" style={{ opacity: .4 }}>{label}</span>;
+    }
+    return (
+      <Link href={buildHref(page, searchParams, path)} className="pg-btn">
+        {label}
+      </Link>
+    );
+  };
+
   return (
     <div className="pagination">
-      {currentPage > 1
-        ? <Link href={buildHref(currentPage - 1, searchParams, path)} className="pg-btn">‹ Prev</Link>
-        : <span className="pg-btn" style={{ opacity: .4 }}>‹ Prev</span>}
+      {renderButton(currentPage - 1, "‹ Prev", currentPage <= 1)}
 
       {start > 1 && (
         <>
-          <Link href={buildHref(1, searchParams, path)} className="pg-btn">1</Link>
+          {renderButton(1, "1")}
           {start > 2 && <span style={{ color: "var(--subtle)", padding: "0 2px" }}>…</span>}
         </>
       )}
@@ -47,19 +67,17 @@ export default function Pagination({ currentPage, totalPages, searchParams = {} 
       {pages.map(p =>
         p === currentPage
           ? <span key={p} className="pg-btn current">{p}</span>
-          : <Link key={p} href={buildHref(p, searchParams, path)} className="pg-btn">{p}</Link>
+          : renderButton(p, p)
       )}
 
       {end < totalPages && (
         <>
           {end < totalPages - 1 && <span style={{ color: "var(--subtle)", padding: "0 2px" }}>…</span>}
-          <Link href={buildHref(totalPages, searchParams, path)} className="pg-btn">{totalPages}</Link>
+          {renderButton(totalPages, totalPages)}
         </>
       )}
 
-      {currentPage < totalPages
-        ? <Link href={buildHref(currentPage + 1, searchParams, path)} className="pg-btn">Next ›</Link>
-        : <span className="pg-btn" style={{ opacity: .4 }}>Next ›</span>}
+      {renderButton(currentPage + 1, "Next ›", currentPage >= totalPages)}
     </div>
   );
 }
