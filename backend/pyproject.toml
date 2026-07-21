@@ -1,0 +1,45 @@
+[project]
+name = "newsixity-backend"
+version = "0.1.0"
+description = "Newsixity FastAPI backend (migrated from Next.js). Serves the built SPA and the /api surface."
+requires-python = ">=3.11"
+
+# Core runtime deps needed from Stage 0 onward. Heavier integration deps
+# (feedparser, yfinance, trafilatura, httpx, ollama, apscheduler) live in the
+# optional [integrations] group so early stages stay slim — see docs/migration/spec.md.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    # AES-256-GCM for encrypted settings (e.g. brave_search_api_key) — core,
+    # not optional: mirrors queries.ts's settings encryption, used by the
+    # core settings API surface regardless of which integrations are enabled.
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+integrations = [
+    "httpx>=0.27",
+    "feedparser>=6.0",
+    "trafilatura>=1.9",
+    "yfinance>=0.2.40",
+    "ollama>=0.3",
+    "apscheduler>=3.10",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

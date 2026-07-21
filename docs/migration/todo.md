@@ -1,0 +1,52 @@
+# Migration TODO
+
+> Living checklist for the Node → FastAPI migration.
+> Details: [spec.md](spec.md) · Slimming/perf: [Improvements.md](Improvements.md)
+> Status legend: `[ ]` todo · `[~]` in progress · `[x]` done.
+> Model per task: **Haiku 4.5** (mechanical) · **Sonnet 5** (mid-complexity/review) · **Opus 4.8** (architecture/security/concurrency).
+
+## Phase 0 — Decisions (done)
+
+- [x] Choose frontend strategy → **Option C** (FastAPI serves static SPA)
+- [x] Choose content extraction → **HTTP-only** (drop Playwright)
+- [x] Write spec + improvements + this tracker
+
+## Phase 1 — Backend port (follows spec §6)
+
+- [x] **[Opus 4.8]** Stage 0 — scaffolding, config, lifespan skeleton, **sync-vs-async DB decision** → chose **sync SQLAlchemy 2.0** (see spec §2/§6). `backend/` created; app imports, `/api/health` live.
+- [x] **[Opus 4.8]** Stage 1a — schema → SQLAlchemy models (pragmas, WAL, FK, indexes). `backend/app/db/models.py` — all 12 tables + 14 indexes + seed; **verified column-for-column against the real 109 MB DB (zero drift)**.
+- [x] **[Haiku 4.5 / Sonnet 5]** Stage 1b — port `queries.ts` (1,930 LOC) → `backend/app/db/repository/` (12 modules, 96 exported symbols). **Complete and verified against the real 109 MB production DB (read-only checks across every module).**
+  - Haiku built: Categories, Articles (reads/writes), Feeds, Article Groups (initial), Stats
+  - Sonnet built: Article Research, Search Quota, Settings (AES-256-GCM encryption), Finance (watchlist/quote/chart/heatmap caches), Console (summarization queue/culling/manual links), Ranking/Promotion, Preferences, reset-failed-articles
+  - **Sonnet review caught and fixed 6 real bugs in Haiku's draft** (see `backend/STAGE_1B_HANDOFF.md` "Review Outcome" for detail): (1) `article_groups.py` used invalid SQLAlchemy 1.x `func.count(case=[...])` syntax that would crash; (2) same function's sports/promoted filters matched *any* article in a group instead of the *representative* article only (queries.ts uses `EXISTS` against the representative specifically) — wrong results, now fixed + N+1 eliminated (1+2N queries → 3); (3) `upsert_article`/`update_article_content` silently dropped the SSRF (`parseHttpUrl`) and stored-XSS (`stripHtml`) guards the Node app already hardened once — restored, plus switched check-then-insert to atomic `INSERT OR IGNORE` to remove a race under concurrent RSS refresh; (4) `get_all_feeds` used invalid Row attribute access (`row.FeedModel.id`) that would crash; (5) three spots assigned `func.datetime("now")` directly to ORM instance attributes instead of using an `UPDATE` statement — silently wrong, not just wasted (SQLAlchemy has no contract for flushing a raw SQL ClauseElement through instance-attribute assignment); (6) **models.py (Stage 1a) itself was missing `sqlite_autoincrement=True` on all 12 tables** — schema.ts declares `AUTOINCREMENT` everywhere, so freshly-created (non-production) DBs would have silently allowed rowid reuse after deletes; fixed and confirmed no id reuse. All fixes verified with executable tests, not just read-through.
+- [x] **[Haiku 4.5]** Stage 2 — pydantic schemas from `types` + zod → `backend/app/schemas.py` (30+ models, full request/response validation, field aliasing for camelCase↔snake_case)
+- [x] **[Haiku 4.5]** Stage 3 — pure logic (dedup, utils) → `backend/app/lib/{dedup,utils}/` (8 utility modules + 2 dedup modules); **Sonnet 5** ranking math deferred to Stage 5
+- [x] **[Haiku 4.5]** Stage 4 — RSS feed parsing (feedparser), HTTP-only content extraction (trafilatura + pattern fallback), search result extraction (DuckDuckGo HTML). **Sonnet 5** yfinance/ollama pending.
+- [~] **[Haiku 4.5]** Stage 5 — 24 API routers (4/24 complete: health, categories, articles, feeds). Router scaffolding pattern established. **Sonnet 5** completes settings/preferences/research/summarize/console + Stage 4 finance/ollama.
+- [ ] **[Opus 4.8]** Stage 6 — auth, rate-limit, middleware (security-critical)
+- [ ] **[Opus 4.8]** Stage 7 — background schedulers (APScheduler + asyncio locks)
+
+## Phase 2 — Frontend + delivery
+
+- [ ] **[Sonnet 5 design / Haiku 4.5 wiring]** Stage 8 — Vite build → `StaticFiles` + SPA fallback route
+- [ ] **[Haiku 4.5]** Stage 4 sub-task — verify content-quality loss on live feed list (JS-heavy → RSS snippet)
+
+## Phase 3 — Tests & ops
+
+- [ ] **[Haiku 4.5]** Stage 9 — port tests to pytest; **Sonnet 5** for `tests/security`
+- [ ] **[Sonnet 5 / Opus 4.8]** Stage 10 — Sonnet: Dockerfile + start/stop scripts · Opus: old-vs-new parity sign-off
+
+## Phase 4 — Slimming (can run in parallel; see Improvements.md)
+
+- [ ] **[Haiku 4.5]** Git untrack `graphify-out/`, `data_backup_*`, empty `.sqlite` + gitignore
+- [ ] **[Haiku 4.5]** VACUUM + WAL checkpoint DB; lower backup cap
+- [ ] **[Haiku 4.5]** Pick one package manager; remove `pnpm` from deps
+- [ ] **[Sonnet 5]** Carry perf TODOs #19–24 into the port (Improvements.md §D)
+
+## Definition of done (spec §8)
+
+- [ ] All 24 endpoints match current response shapes
+- [ ] Summaries / dedup / rankings match Node version on same inputs
+- [ ] Background jobs run once-per-process, no pile-up
+- [ ] Deployed image ~200–300 MB; no Node/Chromium/`node_modules` at runtime
+- [ ] pytest suites pass (incl. ported security tests)

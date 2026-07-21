@@ -1,0 +1,1 @@
+"""Newsixity FastAPI backend package."""
