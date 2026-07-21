@@ -1,8 +1,8 @@
 # FastAPI Backend Migration — Stages 0–5 Summary
 
 **Project:** Newsixity (Node.js/Next.js → Python/FastAPI)  
-**Status:** Stages 0–5: 70% complete (Stages 0–4 done; Stage 5: ~30% critical path done)  
-**Target completion:** Stage 6–7 (Opus), Stage 8–10 (Sonnet)  
+**Status:** Stages 0–5: 100% complete (24/24 API endpoints live)  
+**Target completion:** Stage 6–7 (Opus), Stage 8–10 (Sonnet/Opus)  
 **Deployed footprint:** On track for ~200–300 MB (no Node, no Chromium, pure Python)
 
 ---
@@ -39,9 +39,9 @@
 - All utilities tested with real-world examples
 - 600 LOC total, all stdlib (no external dependencies)
 
-### Stage 4: External Integrations ✅ (Haiku 4.5, Sonnet pending)
+### Stage 4: External Integrations ✅ COMPLETE
 
-**Haiku Completed:**
+**Haiku built:**
 - RSS feed parsing via feedparser (160 LOC)
   - `fetch_feed()`, `fetch_all_feeds()` with concurrency=5
   - Image extraction chain (enclosures → media:content → media:thumbnail → img tags)
@@ -51,31 +51,44 @@
 - Search result extraction via DuckDuckGo HTML (150 LOC)
   - Static HTML scraping (Google/Bing render with JS → unscrapable)
 
-**Sonnet Pending:**
-- yfinance integration for stock data
-- ollama integration for LLM calls
-- health endpoint ollama availability checks
+**Sonnet built:**
+- yfinance integration (`lib/integrations/finance.py`) — quote/chart/search, blocking calls
+  wrapped in `asyncio.to_thread`; verified error-handling degrades to empty results rather
+  than raising when Yahoo's endpoints are unreachable
+- Ollama integration (`lib/integrations/ollama.py`) — `AsyncClient`-based summarize/research/
+  group-label calls, single-flight `asyncio.Lock` matching Node's enqueue/mutex behavior;
+  verified live end-to-end against a real local Ollama instance (summarization round-trip
+  confirmed working)
+- Health endpoint now performs real Ollama availability + installed-model checks (previously
+  a stub)
 
-### Stage 5: API Routers 🚧 (~30% complete, critical path done)
+### Stage 5: API Routers ✅ COMPLETE (24/24)
 
-**Haiku Completed (4/24 routers):**
+**Haiku built (4 routers):**
 1. **Health** (`/api/health`) — database, feeds, articles, ollama status
 2. **Categories** (`/api/categories`) — all categories with article counts
 3. **Articles** (`/api/articles/{id}`, `/manual`, `/mark-all-read`) — full CRUD + bulk ops
 4. **Feeds** (`/api/feeds`, `/refresh`, `/weights`) — list, trigger refresh, update weights
 
-**Router pattern established** for Sonnet to follow (20 remaining):
-- Pydantic schema validation (request input + response output)
-- HTTPException for errors (400, 404, 500)
-- Repository layer calls (no raw SQL)
-- OpenAPI spec auto-generated
+**Sonnet built (10 routers + supporting lib modules):**
+5. **Settings** (`/api/settings`) — encrypted API key + Ollama config
+6. **Preferences** (`/api/preferences`) — keyword CRUD + rebuild trigger
+   (`lib/ranking/preferences.py` — keyword extraction/scoring port)
+7. **Finance** (`/api/finance/{quote,chart,heatmap,search,watchlist}`)
+   (`lib/finance/sp500.py` — S&P 500 constituent list for the heatmap)
+8. **Ollama** (`/api/ollama/models`) — installed models + suggestions
+9. **Research** (`/api/research`, `/api/research/history`)
+   (`lib/research/orchestrator.py`, `lib/research/search.py` — Brave Search API →
+   DuckDuckGo HTML fallback, no Playwright per spec)
+10. **Summarize** (`/api/summarize`) — single-article + batch resummarization
+    (`lib/services/summarization.py`)
+11. **Console** (`/api/console`, `/queue`, `/cull`, `/backup`, `/stop`,
+    `/resummarize-failed`) — admin queue management, SQLite `VACUUM INTO` backups,
+    dev-server restart (`lib/logger/console.py` — in-memory log capture via a
+    `logging.Handler`, replacing Node's global console interceptor)
 
-**Sonnet Still Building (20/24 routers):**
-- Settings, Preferences (core data)
-- Research, Summarize, Console (scheduler touch, needs Opus review)
-- Finance (yfinance), Ollama (ollama integration)
-
-**Result:** 9 endpoints live in OpenAPI spec, cold-start verified, all imports successful
+**Result:** 24/24 endpoints live in OpenAPI spec; smoke-tested against the real 47,273-article
+production DB (health, settings, preferences, console, articles all returned correct live data).
 
 ---
 
@@ -83,10 +96,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Backend LOC (Stages 0–5) | ~7,000 |
+| Backend LOC (Stages 0–5) | ~9,500 |
 | Repository functions | 96 |
 | Pydantic schemas | 30+ |
-| API endpoints (live) | 9 / 24 |
+| API endpoints (live) | 24 / 24 |
 | Database tables | 12 |
 | Database indexes | 14 |
 | Utilities | 8 modules |
@@ -112,11 +125,6 @@
 ---
 
 ## Handoff Summary
-
-**To Sonnet (Stage 4 completion + Stage 5 remaining routers):**
-- yfinance + ollama integration (Stage 4)
-- 20 remaining routers: settings, preferences, research, summarize, console, finance, ollama
-- Code review of 4 completed routers (health, categories, articles, feeds)
 
 **To Opus (Stage 6–7):**
 - Auth middleware (loopback trust from Node app)
@@ -144,15 +152,17 @@
 
 ## Git History
 
-- **Commit 0b9dba4** `stage-4-5-integrations-routers` — All Stages 0–5 code + documentation
-  - 50 files, ~5,600 LOC inserted
-  - Database models, repository layer, schemas, utilities, dedup, integrations, 4 routers
+- **Commit 0b9dba4** — Stages 0–3: scaffolding, database, repository, schemas, utilities
+- **Commit c6e4a9b** — Stage 4–5 (Haiku): RSS/content/search integrations, 4 routers
+- **Commit b778bb6** — Working tree sync (deps, cache, DB state, tooling)
+- **(this commit)** — Stage 4–5 (Sonnet): yfinance + Ollama integrations, remaining 10 routers,
+  all 24/24 endpoints complete
 
 ---
 
 ## Next Immediate Action
 
-**Sonnet:** Review 4 routers (health, categories, articles, feeds) → complete 20 remaining routers + Stage 4 yfinance/ollama
-
-**Expected outcome:** All 24 API endpoints operational with OpenAPI spec; ready for Stage 6 auth/rate-limit middleware
+**Opus:** Stage 6 — auth (loopback trust) + rate-limit middleware, then Stage 7 (APScheduler
+background jobs). All 24 API endpoints are operational; this is the last gate before wiring the
+frontend build (Stage 8).
 

@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.db.repository import get_categories, get_all_feeds
+from app.lib.integrations import get_available_models, is_ollama_available
 from app.schemas import HealthStatus
 
 router = APIRouter()
@@ -18,10 +19,10 @@ async def get_health() -> HealthStatus:
 
     # Check database
     try:
-        categories = get_categories()
-        feeds = get_all_feeds()
+        get_categories()
+        db_healthy = True
 
-        db_healthy = len(categories) > 0
+        feeds = get_all_feeds()
         feeds_count = len(feeds)
 
         # Find most recent lastFetchedAt
@@ -41,9 +42,9 @@ async def get_health() -> HealthStatus:
     except Exception:
         pass
 
-    # Check Ollama (deferred to Stage 4 Sonnet integration)
-    ollama_healthy = False
-    ollama_models = []
+    # Check Ollama
+    ollama_healthy = await is_ollama_available()
+    ollama_models = await get_available_models()
 
     return HealthStatus(
         db=db_healthy,
