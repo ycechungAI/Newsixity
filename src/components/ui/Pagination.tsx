@@ -32,10 +32,11 @@ export default function Pagination({ currentPage, totalPages, searchParams = {},
 
   const path = pathname || "/";
 
-  const renderButton = (page: number, label: React.ReactNode, isDisabled = false) => {
+  const renderButton = (page: number, label: React.ReactNode, isDisabled = false, key?: React.Key) => {
     if (onChange && !isDisabled) {
       return (
         <button
+          key={key}
           onClick={() => onChange(page)}
           className="pg-btn"
         >
@@ -44,10 +45,10 @@ export default function Pagination({ currentPage, totalPages, searchParams = {},
       );
     }
     if (isDisabled) {
-      return <span className="pg-btn" style={{ opacity: .4 }}>{label}</span>;
+      return <span key={key} className="pg-btn" style={{ opacity: .4 }}>{label}</span>;
     }
     return (
-      <Link href={buildHref(page, searchParams, path)} className="pg-btn">
+      <Link key={key} href={buildHref(page, searchParams, path)} className="pg-btn">
         {label}
       </Link>
     );
@@ -67,7 +68,7 @@ export default function Pagination({ currentPage, totalPages, searchParams = {},
       {pages.map(p =>
         p === currentPage
           ? <span key={p} className="pg-btn current">{p}</span>
-          : renderButton(p, p)
+          : renderButton(p, p, false, p)
       )}
 
       {end < totalPages && (

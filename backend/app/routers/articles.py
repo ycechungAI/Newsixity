@@ -129,7 +129,7 @@ async def create_manual_article(body: ManualArticleRequestBody) -> Article:
         url=body.url,
         title=body.title,
         content=body.content,
-        image_url=body.image_url,
+        image_url=body.imageUrl,
         author=body.author,
     )
 
@@ -148,8 +148,8 @@ async def mark_all_read(
     body: Optional[ArticlesMarkAllReadRequestBody] = None,
 ) -> dict:
     """Mark all articles as read (optionally for a specific category)."""
-    category_slug = body.category_slug if body else None
+    category_slug = body.categorySlug if body else None
 
-    mark_all_read_by_category(category_slug)
+    marked = mark_all_read_by_category(category_slug)
 
-    return {"success": True}
+    return {"success": True, "marked": marked}

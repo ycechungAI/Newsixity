@@ -12,6 +12,11 @@ import AddLinkButton from "@/components/ui/AddLinkButton";
 
 type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
 
+function getDefaultView(slug: string): ViewMode {
+  if (slug === "others") return "cards";
+  return "topics";
+}
+
 function getPerPage(viewMode: ViewMode) {
   if (viewMode === "list") return 200;
   if (viewMode === "compact") return 50;
@@ -22,7 +27,7 @@ export default function CategoryPageClient({ slug }: { slug: string }) {
   const router = useRouter();
   const [articles, setArticles] = useState<Article[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("topics");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultView(slug));
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
 

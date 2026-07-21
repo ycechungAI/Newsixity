@@ -23,10 +23,10 @@ export default function FinanceNewsPage() {
   const perPage = getPerPage(viewMode);
 
   useEffect(() => {
-    fetch("/api/articles?limit=1000")
+    fetch("/api/articles?category=finance&limit=1000")
       .then(r => r.json())
       .then((data: Article[]) => {
-        setArticles((data || []).filter((a: Article) => a.categorySlug === "finance"));
+        setArticles(data || []);
       });
   }, []);
 
