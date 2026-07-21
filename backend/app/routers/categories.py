@@ -14,8 +14,9 @@ async def list_categories() -> list[CategoryWithCounts]:
     categories = get_categories()
     counts = get_article_count_by_category()
 
-    # Build a lookup map from slug to counts
-    count_map = {c.slug: {"total": c.total, "unread": c.unread} for c in counts}
+    # Build a lookup map from slug to counts.
+    # get_article_count_by_category() returns list[dict], so index by key.
+    count_map = {c["slug"]: {"total": c["total"], "unread": c["unread"]} for c in counts}
 
     # Merge counts into category objects
     result = []
