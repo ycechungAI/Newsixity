@@ -22,9 +22,14 @@ function toArticleListViewMode(mode: SavedViewMode): ViewMode {
   return mode;
 }
 
+interface CategoryWithCounts extends Category {
+  total: number;
+  unread: number;
+}
+
 export default function SavedPage() {
   const [articles, setArticles] = useState<Article[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<CategoryWithCounts[]>([]);
   const [viewMode, setViewMode] = useState<SavedViewMode>("cards");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -37,8 +42,31 @@ export default function SavedPage() {
       fetch("/api/articles?limit=1000").then(r => r.json()),
     ])
       .then(([cats, arts]: [Category[], Article[]]) => {
-        setCategories(cats || []);
-        setArticles((arts || []).filter((a: Article) => a.isSaved));
+        const saved = (arts || []).filter((a: Article) => a.isSaved);
+        const counts = new Map<string, { total: number; unread: number }>();
+
+        (cats || []).forEach((cat: Category) => {
+          counts.set(cat.slug, { total: 0, unread: 0 });
+        });
+
+        saved.forEach((art: Article) => {
+          const entry = counts.get(art.categorySlug);
+          if (entry) {
+            entry.total++;
+            if (!art.isRead) entry.unread++;
+          }
+        });
+
+        const withCounts: CategoryWithCounts[] = (cats || []).map((cat: Category) => {
+          const c = counts.get(cat.slug) || { total: 0, unread: 0 };
+          return {
+            ...cat,
+            ...c,
+          };
+        });
+
+        setCategories(withCounts);
+        setArticles(saved);
       });
   }, []);
 

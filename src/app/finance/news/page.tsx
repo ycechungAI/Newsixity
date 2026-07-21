@@ -7,7 +7,7 @@ import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
 
-type ViewMode = "topics" | "compact" | "sources" | "timeline" | "list";
+type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
 
 function getPerPage(viewMode: ViewMode) {
   if (viewMode === "list") return 200;
@@ -48,7 +48,7 @@ export default function FinanceNewsPage() {
       </div>
 
       <div className="mb-4 flex items-center justify-end">
-        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+        <ViewModeToggle viewMode={viewMode} onChange={(mode) => setViewMode(mode)} />
       </div>
 
       {paginatedArticles.length > 0 ? (
