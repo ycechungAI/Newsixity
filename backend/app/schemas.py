@@ -11,7 +11,7 @@ class Category(BaseModel):
     id: int
     name: str
     slug: str
-    sortOrder: int = Field(alias="sort_order", default=0)
+    sortOrder: int = Field(validation_alias="sort_order", default=0)
 
     model_config = {"populate_by_name": True}
 
@@ -23,38 +23,38 @@ class CategoryWithCounts(Category):
 
 class Feed(BaseModel):
     id: int
-    categoryId: int = Field(alias="category_id")
-    categorySlug: Optional[str] = Field(alias="category_slug", default=None)
+    categoryId: int = Field(validation_alias="category_id")
+    categorySlug: Optional[str] = Field(validation_alias="category_slug", default=None)
     name: str
     url: str
     enabled: bool
-    lastFetchedAt: Optional[str] = Field(alias="last_fetched_at", default=None)
-    lastError: Optional[str] = Field(alias="last_error", default=None)
-    sourceWeight: float = Field(alias="source_weight", default=1.0)
+    lastFetchedAt: Optional[str] = Field(validation_alias="last_fetched_at", default=None)
+    lastError: Optional[str] = Field(validation_alias="last_error", default=None)
+    sourceWeight: float = Field(validation_alias="source_weight", default=1.0)
 
     model_config = {"populate_by_name": True}
 
 
 class Article(BaseModel):
     id: int
-    feedId: int = Field(alias="feed_id")
-    feedName: str = Field(alias="feed_name")
-    categorySlug: str = Field(alias="category_slug")
+    feedId: int = Field(validation_alias="feed_id")
+    feedName: str = Field(validation_alias="feed_name")
+    categorySlug: str = Field(validation_alias="category_slug")
     guid: str
     title: str
     link: str
     author: Optional[str] = None
-    publishedAt: Optional[str] = Field(alias="published_at", default=None)
+    publishedAt: Optional[str] = Field(validation_alias="published_at", default=None)
     content: Optional[str] = None
-    imageUrl: Optional[str] = Field(alias="image_url", default=None)
+    imageUrl: Optional[str] = Field(validation_alias="image_url", default=None)
     summary: Optional[str] = None
-    summaryModel: Optional[str] = Field(alias="summary_model", default=None)
-    isRead: bool = Field(alias="is_read")
-    isSaved: bool = Field(alias="is_saved")
-    groupId: Optional[int] = Field(alias="group_id", default=None)
-    fetchedAt: str = Field(alias="fetched_at")
-    relevanceScore: float = Field(alias="relevance_score", default=0.0)
-    isPromoted: bool = Field(alias="is_promoted", default=False)
+    summaryModel: Optional[str] = Field(validation_alias="summary_model", default=None)
+    isRead: bool = Field(validation_alias="is_read")
+    isSaved: bool = Field(validation_alias="is_saved")
+    groupId: Optional[int] = Field(validation_alias="group_id", default=None)
+    fetchedAt: str = Field(validation_alias="fetched_at")
+    relevanceScore: float = Field(validation_alias="relevance_score", default=0.0)
+    isPromoted: bool = Field(validation_alias="is_promoted", default=False)
 
     model_config = {"populate_by_name": True}
 
@@ -62,9 +62,9 @@ class Article(BaseModel):
 class ArticleGroup(BaseModel):
     id: int
     label: Optional[str] = None
-    categoryId: int = Field(alias="category_id")
-    representativeId: int = Field(alias="representative_id")
-    articleCount: int = Field(alias="article_count")
+    categoryId: int = Field(validation_alias="category_id")
+    representativeId: int = Field(validation_alias="representative_id")
+    articleCount: int = Field(validation_alias="article_count")
     representative: Article
     articles: list[Article]
 
@@ -79,23 +79,23 @@ class ResearchSource(BaseModel):
 
 class ArticleResearch(BaseModel):
     id: int
-    articleId: int = Field(alias="article_id")
+    articleId: int = Field(validation_alias="article_id")
     question: str
     answer: str
     sources: list[ResearchSource]
     model: Optional[str] = None
-    createdAt: str = Field(alias="created_at")
+    createdAt: str = Field(validation_alias="created_at")
 
     model_config = {"populate_by_name": True}
 
 
 class UserPreference(BaseModel):
     id: int
-    categorySlug: str = Field(alias="category_slug")
+    categorySlug: str = Field(validation_alias="category_slug")
     keyword: str
     weight: float
     source: str  # "auto" or "manual"
-    updatedAt: str = Field(alias="updated_at")
+    updatedAt: str = Field(validation_alias="updated_at")
 
     model_config = {"populate_by_name": True}
 
@@ -104,12 +104,12 @@ class StockQuote(BaseModel):
     symbol: str
     price: float
     change: float
-    changePercent: float = Field(alias="change_percent")
+    changePercent: float = Field(validation_alias="change_percent")
     volume: Optional[int] = None
-    marketCap: Optional[float] = Field(alias="market_cap", default=None)
+    marketCap: Optional[float] = Field(validation_alias="market_cap", default=None)
     currency: Optional[str] = None
-    cachedAt: str = Field(alias="cached_at")
-    expiresAt: str = Field(alias="expires_at")
+    cachedAt: str = Field(validation_alias="cached_at")
+    expiresAt: str = Field(validation_alias="expires_at")
 
     model_config = {"populate_by_name": True}
 
@@ -118,8 +118,8 @@ class StockChartData(BaseModel):
     symbol: str
     timeframe: str
     data: str  # JSON string of the chart data
-    cachedAt: str = Field(alias="cached_at")
-    expiresAt: str = Field(alias="expires_at")
+    cachedAt: str = Field(validation_alias="cached_at")
+    expiresAt: str = Field(validation_alias="expires_at")
 
     model_config = {"populate_by_name": True}
 
@@ -127,7 +127,7 @@ class StockChartData(BaseModel):
 class MarketHeatmapSnapshot(BaseModel):
     date: str
     data: str  # JSON string of the heatmap data
-    createdAt: str = Field(alias="created_at")
+    createdAt: str = Field(validation_alias="created_at")
 
     model_config = {"populate_by_name": True}
 
@@ -135,17 +135,17 @@ class MarketHeatmapSnapshot(BaseModel):
 class HealthStatus(BaseModel):
     db: bool
     ollama: bool
-    ollamaModels: list[str] = Field(alias="ollama_models")
-    feedsCount: int = Field(alias="feeds_count")
-    articlesCount: int = Field(alias="articles_count")
-    lastRefresh: Optional[str] = Field(alias="last_refresh", default=None)
+    ollamaModels: list[str] = Field(validation_alias="ollama_models")
+    feedsCount: int = Field(validation_alias="feeds_count")
+    articlesCount: int = Field(validation_alias="articles_count")
+    lastRefresh: Optional[str] = Field(validation_alias="last_refresh", default=None)
 
     model_config = {"populate_by_name": True}
 
 
 class RefreshResult(BaseModel):
     refreshed: int
-    newArticles: int = Field(alias="new_articles")
+    newArticles: int = Field(validation_alias="new_articles")
     errors: list[str]
 
     model_config = {"populate_by_name": True}
@@ -155,7 +155,7 @@ class RefreshResult(BaseModel):
 
 
 class ResearchRequestBody(BaseModel):
-    articleId: int = Field(alias="article_id")
+    articleId: int = Field(validation_alias="article_id")
     question: str
 
     @field_validator("articleId")
@@ -177,7 +177,7 @@ class ResearchRequestBody(BaseModel):
 
 
 class PreferenceCreateRequestBody(BaseModel):
-    categorySlug: str = Field(alias="category_slug")
+    categorySlug: str = Field(validation_alias="category_slug")
     keyword: str
     weight: Optional[float] = Field(default=1.0)
     source: Optional[str] = Field(default="auto")
@@ -212,7 +212,7 @@ class PreferenceDeleteRequestQuery(BaseModel):
 
 
 class PreferenceRebuildRequestBody(BaseModel):
-    categorySlug: Optional[str] = Field(alias="category_slug", default=None)
+    categorySlug: Optional[str] = Field(validation_alias="category_slug", default=None)
 
     model_config = {"populate_by_name": True}
 
@@ -221,7 +221,7 @@ class ManualArticleRequestBody(BaseModel):
     url: str
     title: str
     content: Optional[str] = None
-    imageUrl: Optional[str] = Field(alias="image_url", default=None)
+    imageUrl: Optional[str] = Field(validation_alias="image_url", default=None)
     author: Optional[str] = None
 
     @field_validator("url", "imageUrl", mode="before")
@@ -290,7 +290,7 @@ class SettingsUpdateRequestBody(BaseModel):
 
 
 class FeedWeightUpdateRequestBody(BaseModel):
-    feedId: int = Field(alias="feed_id")
+    feedId: int = Field(validation_alias="feed_id")
     weight: float
 
     @field_validator("weight")
@@ -357,7 +357,7 @@ class FinanceWatchlistDeleteRequestBody(BaseModel):
 
 
 class ArticlesMarkAllReadRequestBody(BaseModel):
-    categorySlug: Optional[str] = Field(alias="category_slug", default=None)
+    categorySlug: Optional[str] = Field(validation_alias="category_slug", default=None)
 
     model_config = {"populate_by_name": True}
 
