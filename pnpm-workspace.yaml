@@ -1,0 +1,6 @@
+allowBuilds:
+  better-sqlite3: set this to true or false
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false
+minimumReleaseAgeExclude:
+  - pnpm@11.12.0
