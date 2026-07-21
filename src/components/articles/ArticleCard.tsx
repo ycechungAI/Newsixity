@@ -146,7 +146,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
           />
         ) : null}
         <div className="card-body">
-          <Link href={`/article/${article.id}`} className="card-title">{article.title}</Link>
+          <Link href={`/article?id=${article.id}`} className="card-title">{article.title}</Link>
           <div className="card-meta">{meta}</div>
           {preview && <div className="card-preview">{preview}</div>}
           <div className="card-actions">
@@ -176,7 +176,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     <li ref={(node) => { cardRef.current = node; }} className={`article-item${isRead ? " is-read" : ""}`}>
       <span className="article-dot" />
       <div className="article-body">
-        <Link href={`/article/${article.id}`} className="article-title">
+        <Link href={`/article?id=${article.id}`} className="article-title">
           {article.title}
         </Link>
         <div className="article-meta">{meta}</div>

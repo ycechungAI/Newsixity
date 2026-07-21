@@ -76,7 +76,7 @@ export default function SearchResultsSummary({
             <div className="flex-1 min-w-0">
               {result.id ? (
                 <Link
-                  href={`/article/${result.id}`}
+                  href={`/article?id=${result.id}`}
                   className="text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 font-medium line-clamp-1"
                 >
                   {result.title}
