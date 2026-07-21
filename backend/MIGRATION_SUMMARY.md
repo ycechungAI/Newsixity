@@ -1,8 +1,8 @@
-# FastAPI Backend Migration — Stages 0–6 Summary
+# FastAPI Backend Migration — Stages 0–7 Summary
 
 **Project:** Newsixity (Node.js/Next.js → Python/FastAPI)  
-**Status:** Stages 0–6: 100% complete (24/24 API endpoints live, security middleware in place)  
-**Target completion:** Stage 7 (Opus), Stage 8–10 (Sonnet/Opus)  
+**Status:** Stages 0–7: 100% complete (24/24 API endpoints live, security middleware + background schedulers in place)  
+**Target completion:** Stage 8–10 (Sonnet/Opus)  
 **Deployed footprint:** On track for ~200–300 MB (no Node, no Chromium, pure Python)
 
 ---
@@ -120,6 +120,49 @@ central handler reproduce Node's `{"error":"Rate limit exceeded","retryAfter":N}
 public `x-forwarded-for`), token-mode (admin vs api token, admin-path gating), mutating CSRF +
 origin 403s, and rate-limit 429 parity (30 requests pass, #31 blocked with `retryAfter:600`).
 
+### Stage 7: Background Schedulers ✅ COMPLETE (Opus 4.8)
+
+Ports `src/lib/server/background-services.ts` and the four Node scheduler sources
+(`rss/scheduler.ts`, `ollama/scheduler.ts`, `ollama/background.ts`, `backup/scheduler.ts`)
+into `backend/app/lib/scheduler/`, run by a single **`AsyncIOScheduler`** on FastAPI's event
+loop instead of Node's three `setInterval`/`setTimeout` loops.
+
+**Jobs** (`scheduler/service.py`, started from the lifespan when
+`settings.disable_background_services` is false):
+- **RSS refresh** (`refresh.py`) — 5 s after startup, then every 15 min. Seeds default feeds,
+  fetches every enabled feed, exact-title-hash dedups, upserts, groups new articles per
+  category, then scores + promotes the capped categories; fires the summarizer fire-and-forget.
+- **Summarization** (`summarizer.py`) — 10 s after startup, then every 3 min. Priority order
+  (saved → recently fetched → category batches), stops early if Ollama drops. Keeps Node's
+  `backgroundRunning` guard as a module flag set before any `await`, so a refresh-triggered
+  batch never piles up on the 3-min tick.
+- **Daily backup** (`backup.py`) — an immediate startup backup + 3 AM local (`CronTrigger`).
+  `VACUUM INTO` snapshot under `data/backups/newsixity-auto-*.db`, keeping the 10 newest.
+
+**Concurrency model:** every job registers `max_instances=1` + `coalesce=True` (a slow run
+never overlaps the next tick — the run-once-per-tick guarantee Node got from its single thread).
+Blocking work (feedparser fetch, SQLite `VACUUM INTO`) runs in `asyncio.to_thread` so the event
+loop is never stalled; ollama calls are natively async. `start_background_services` is idempotent
+per process (mirrors the `__newsixityBackgroundServicesStarted` global flag) and the lifespan
+shuts the scheduler down on exit.
+
+**Supporting ports** the jobs required (previously missing from the backend): `lib/ranking/scorer.py`
+(`score_article` / `score_articles_for_category`, five-signal 0-100 scoring), `lib/ranking/promoter.py`
+(`score_and_promote[_all]`, deletion disabled as in Node), `lib/rss/feeds.py` (`DEFAULT_FEEDS` +
+idempotent `seed_all_feeds`), and a `mark_stuck_unsummarized_timed_out()` repository helper (the 2-hour
+stuck-task cleanup). The articles router's on-save→summarize hook now fires `summarize_article_by_id`.
+
+**Verified:** app imports with 35 OpenAPI operations (unchanged); the 4 jobs register with the
+correct interval/date/cron triggers and `max_instances=1`; the full FastAPI lifespan starts and
+stops the scheduler cleanly (closed before any job fired, so the production DB is untouched); the
+summarizer concurrency guard short-circuits a re-entrant call; and the scorer runs read-only
+against the production DB (sample article scored 64.0/100). New Stage 7 modules are ruff-clean.
+
+**Known gap (not Stage 7):** the richer `POST /api/feeds/refresh` *endpoint* algorithm (finance
+priority, per-category daily insert cap, fuzzy dedup, `RefreshResult` body) is a separate Stage 5
+router port still stubbed — the scheduler's `refresh_all_feeds` is the simpler `refreshAllFeeds`
+path. Tracked as a follow-up.
+
 ---
 
 ## Statistics
@@ -160,9 +203,11 @@ origin 403s, and rate-limit 429 parity (30 requests pass, #31 blocked with `retr
 - ✅ Auth middleware (loopback trust + token auth + CSRF/origin)
 - ✅ Per-route fixed-window rate limiting (matching Node's routeKey/limit/window table)
 
-**To Opus (Stage 7):**
-- APScheduler integration for RSS refresh, summarization, backup jobs
-- Concurrency guards (asyncio locks) — run-once-per-process, no pile-up
+**Stage 7 (Opus) — DONE:**
+- ✅ AsyncIOScheduler jobs for RSS refresh (15 m), summarization (3 m), daily backup (3 AM)
+- ✅ Concurrency guards (`max_instances=1`/`coalesce` + `backgroundRunning` flag) — no pile-up
+- ✅ Supporting ports: ranking scorer + promoter, feed seeding, stuck-task cleanup
+- ⚠️ Follow-up: rich `POST /api/feeds/refresh` endpoint algorithm still stubbed (Stage 5 gap)
 
 **To Sonnet/Opus (Stage 8–10):**
 - Vite build + StaticFiles serving + SPA fallback route
@@ -189,15 +234,19 @@ origin 403s, and rate-limit 429 parity (30 requests pass, #31 blocked with `retr
 - **Commit b778bb6** — Working tree sync (deps, cache, DB state, tooling)
 - **Commit 9341033** — Stage 4–5 (Sonnet): yfinance + Ollama integrations, remaining 10 routers,
   all 24/24 endpoints complete
-- **(this commit)** — Stage 6 (Opus): auth + rate-limit middleware (`lib/server/{auth,rate_limit}.py`),
+- **Commit 09055ae** — Stage 6 (Opus): auth + rate-limit middleware (`lib/server/{auth,rate_limit}.py`),
   global `/api/*` access gate, per-route rate-limit dependencies on 30 routes
+- **Commit 3b4a578** — Fix `/api/categories` 500: dict access on count rows
+- **(this commit)** — Stage 7 (Opus): APScheduler background jobs (`lib/scheduler/`) for RSS
+  refresh, summarization, and daily backup; supporting ranking scorer/promoter, feed seeding,
+  and stuck-task cleanup; lifespan + articles on-save wiring
 
 ---
 
 ## Next Immediate Action
 
-**Opus:** Stage 7 — APScheduler background jobs (RSS refresh, summarization, backup) with
-asyncio concurrency guards, replacing `src/lib/server/background-services.ts`. All 24 API
-endpoints are operational and now gated by auth + rate limiting; Stage 7 is the last backend
-gate before wiring the frontend build (Stage 8).
+**Sonnet/Opus:** Stage 8 — Vite build → `StaticFiles` mount + SPA fallback route, so FastAPI
+serves the frontend. All 24 API endpoints are operational, gated by auth + rate limiting, and
+the background schedulers run on the app's event loop; the backend port is now feature-complete
+and the remaining work is delivery (frontend serving, pytest suite, Docker, parity sign-off).
 

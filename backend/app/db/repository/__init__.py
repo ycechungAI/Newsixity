@@ -28,6 +28,7 @@ from app.db.repository.articles import (
     get_unsummarized_by_category,
     get_recent_unsummarized_articles,
     get_summarize_category_priority,
+    mark_stuck_unsummarized_timed_out,
     reset_failed_and_skipped_articles,
 )
 from app.db.repository.feeds import (
@@ -151,6 +152,7 @@ __all__ = [
     "get_unsummarized_by_category",
     "get_recent_unsummarized_articles",
     "get_summarize_category_priority",
+    "mark_stuck_unsummarized_timed_out",
     "reset_failed_and_skipped_articles",
     # feeds
     "get_all_feeds",

@@ -74,11 +74,16 @@ async def update_article(article_id: int, body: dict) -> dict:
         if current and current.is_saved != is_saved:
             toggle_article_saved(article_id)
 
-            # If saving an unsummarized article, trigger background summarization
-            # (Stage 7: hook into scheduler)
+            # If saving an unsummarized article, trigger background
+            # summarization immediately (fire-and-forget), matching Node's
+            # on-save summarizeArticleById call.
             updated = get_article_by_id(article_id)
             if updated and updated.is_saved and not updated.summary:
-                pass  # Summarization trigger deferred to Stage 7
+                import asyncio
+
+                from app.lib.scheduler import summarize_article_by_id
+
+                asyncio.create_task(summarize_article_by_id(article_id))
 
     article = get_article_by_id(article_id)
     return {"success": True, "category_slug": article.category_slug if article else None}
