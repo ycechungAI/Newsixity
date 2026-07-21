@@ -110,16 +110,11 @@ async def delete_article(article_id: int) -> dict:
 @router.get("/articles")
 async def list_articles(
     category: Optional[str] = Query(None),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> list[Article]:
     """List articles with optional category filter and pagination."""
-    if category:
-        articles = get_articles_by_category(category)
-        return articles[offset : offset + limit]
-
-    # TODO: implement global article listing (no category filter)
-    return []
+    return get_articles_by_category(category, limit=limit, offset=offset)
 
 
 @router.post(
