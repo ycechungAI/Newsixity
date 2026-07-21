@@ -33,6 +33,32 @@ from app.schemas import FinanceWatchlistActionRequestBody, FinanceWatchlistDelet
 
 router = APIRouter()
 
+
+def _quote_to_camel(quote) -> dict:
+    """dataclasses.asdict() emits the StockQuote dataclass's snake_case field
+    names verbatim (change_percent, market_cap, fifty_two_week_high, ...) —
+    these responses never pass through the aliased Pydantic schemas, so
+    nothing translates them. The frontend's StockQuote type
+    (src/lib/finance/types.ts) only reads camelCase; without this the
+    watchlist/heatmap cards read undefined for every numeric field.
+    """
+    d = asdict(quote)
+    return {
+        "symbol": d["symbol"],
+        "name": d["name"],
+        "exchange": d["exchange"],
+        "price": d["price"],
+        "change": d["change"],
+        "changePercent": d["change_percent"],
+        "volume": d["volume"],
+        "marketCap": d["market_cap"],
+        "currency": d["currency"],
+        "fiftyTwoWeekHigh": d["fifty_two_week_high"],
+        "fiftyTwoWeekLow": d["fifty_two_week_low"],
+        "marketState": d["market_state"],
+    }
+
+
 SYMBOL_REGEX = re.compile(r"^[A-Z0-9.^-]{1,15}$")
 QUOTE_CACHE_MINUTES = 15
 CHART_CACHE_HOURS_DAILY = 24
@@ -69,7 +95,7 @@ async def get_quotes(symbols: str = Query(..., min_length=1, max_length=600)) ->
             set_cached_quote(quote, QUOTE_CACHE_MINUTES)
 
     all_quotes = {**cached_quotes, **fresh_quotes}
-    return {"quotes": [asdict(q) for q in all_quotes.values()]}
+    return {"quotes": [_quote_to_camel(q) for q in all_quotes.values()]}
 
 
 @router.get(
@@ -154,7 +180,7 @@ async def get_heatmap(
     for symbol, quote in quotes_map.items():
         sector = sector_by_symbol.get(symbol)
         if sector:
-            stocks.append({**asdict(quote), "sector": sector})
+            stocks.append({**_quote_to_camel(quote), "sector": sector})
 
     import json
 
@@ -192,7 +218,7 @@ async def get_watchlist_with_quotes() -> dict:
             "name": item.name,
             "exchange": item.exchange,
             "addedAt": item.added_at,
-            "quote": asdict(all_quotes[item.symbol]) if item.symbol in all_quotes else None,
+            "quote": _quote_to_camel(all_quotes[item.symbol]) if item.symbol in all_quotes else None,
             "loading": False,
             "error": None if item.symbol in all_quotes else f"Failed to fetch quote for {item.symbol}",
         }
