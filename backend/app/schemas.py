@@ -334,6 +334,27 @@ class FinanceWatchlistActionRequestBody(BaseModel):
     name: str
     exchange: Optional[str] = None
 
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        import re
+
+        trimmed = v.strip()
+        if not trimmed or len(trimmed) > 15 or not re.match(r"^[A-Za-z0-9.^-]+$", trimmed):
+            raise ValueError("Invalid symbol")
+        return trimmed
+
+
+class FinanceWatchlistDeleteRequestBody(BaseModel):
+    id: int
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("id must be positive")
+        return v
+
 
 class ArticlesMarkAllReadRequestBody(BaseModel):
     categorySlug: Optional[str] = Field(alias="category_slug", default=None)
