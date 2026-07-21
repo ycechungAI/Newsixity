@@ -3,8 +3,9 @@
 Port of src/app/api/research/route.ts and src/app/api/research/history/route.ts.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 from app.db.repository import (
     delete_article_research,
     get_all_article_research,
@@ -23,7 +24,10 @@ from app.schemas import ResearchRequestBody
 router = APIRouter()
 
 
-@router.post("/research")
+@router.post(
+    "/research",
+    dependencies=[Depends(rate_limit("research", 30, TEN_MIN_MS))],
+)
 async def create_research(body: ResearchRequestBody) -> dict:
     normalized_question = body.question.strip()
 
@@ -72,7 +76,10 @@ async def create_research(body: ResearchRequestBody) -> dict:
     }
 
 
-@router.get("/research/history")
+@router.get(
+    "/research/history",
+    dependencies=[Depends(rate_limit("research-history-get", 120, TEN_MIN_MS))],
+)
 async def get_research_history(articleId: int = Query(..., gt=0)) -> dict:
     history = get_all_article_research(articleId)
     return {
@@ -89,7 +96,10 @@ async def get_research_history(articleId: int = Query(..., gt=0)) -> dict:
     }
 
 
-@router.delete("/research/history")
+@router.delete(
+    "/research/history",
+    dependencies=[Depends(rate_limit("research-history-delete", 120, TEN_MIN_MS))],
+)
 async def delete_research_history(id: int = Query(..., gt=0)) -> dict:
     delete_article_research(id)
     return {"success": True, "message": "Research deleted successfully"}

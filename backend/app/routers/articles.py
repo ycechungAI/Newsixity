@@ -1,8 +1,9 @@
 """Articles endpoints — /api/articles/*."""
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 from app.db.repository import (
     get_article_by_id,
     delete_article_by_id,
@@ -18,7 +19,11 @@ from app.schemas import Article, ManualArticleRequestBody, ArticlesMarkAllReadRe
 router = APIRouter()
 
 
-@router.get("/articles/{article_id}", response_model=Article)
+@router.get(
+    "/articles/{article_id}",
+    response_model=Article,
+    dependencies=[Depends(rate_limit("article-get", 240, TEN_MIN_MS))],
+)
 async def get_article(article_id: int) -> Article:
     """Fetch article by ID and mark as read."""
     if article_id <= 0:
@@ -34,7 +39,10 @@ async def get_article(article_id: int) -> Article:
     return article
 
 
-@router.patch("/articles/{article_id}")
+@router.patch(
+    "/articles/{article_id}",
+    dependencies=[Depends(rate_limit("article-patch", 120, TEN_MIN_MS))],
+)
 async def update_article(article_id: int, body: dict) -> dict:
     """Update article read/saved status."""
     if article_id <= 0:
@@ -76,7 +84,10 @@ async def update_article(article_id: int, body: dict) -> dict:
     return {"success": True, "category_slug": article.category_slug if article else None}
 
 
-@router.delete("/articles/{article_id}")
+@router.delete(
+    "/articles/{article_id}",
+    dependencies=[Depends(rate_limit("article-delete", 60, TEN_MIN_MS))],
+)
 async def delete_article(article_id: int) -> dict:
     """Delete article by ID."""
     if article_id <= 0:
@@ -106,7 +117,10 @@ async def list_articles(
     return []
 
 
-@router.post("/articles/manual")
+@router.post(
+    "/articles/manual",
+    dependencies=[Depends(rate_limit("manual-article-post", 60, TEN_MIN_MS))],
+)
 async def create_manual_article(body: ManualArticleRequestBody) -> Article:
     """Add a manual article (from console)."""
     from app.db.repository import create_manual_article as create_manual
@@ -126,7 +140,10 @@ async def create_manual_article(body: ManualArticleRequestBody) -> Article:
     return article
 
 
-@router.post("/articles/mark-all-read")
+@router.post(
+    "/articles/mark-all-read",
+    dependencies=[Depends(rate_limit("articles-mark-all-read", 60, TEN_MIN_MS))],
+)
 async def mark_all_read(
     body: Optional[ArticlesMarkAllReadRequestBody] = None,
 ) -> dict:

@@ -8,8 +8,9 @@ from dataclasses import asdict
 from datetime import date as date_cls
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 from app.db.repository import (
     add_to_watchlist,
     clean_expired_charts,
@@ -39,7 +40,10 @@ CHART_CACHE_HOURS_INTRADAY = 1
 VALID_TIMEFRAMES = {"1d", "5d", "1mo", "3mo", "1y"}
 
 
-@router.get("/finance/quote")
+@router.get(
+    "/finance/quote",
+    dependencies=[Depends(rate_limit("finance-quote", 120, TEN_MIN_MS))],
+)
 async def get_quotes(symbols: str = Query(..., min_length=1, max_length=600)) -> dict:
     parsed_symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()][:25]
 
@@ -68,7 +72,10 @@ async def get_quotes(symbols: str = Query(..., min_length=1, max_length=600)) ->
     return {"quotes": [asdict(q) for q in all_quotes.values()]}
 
 
-@router.get("/finance/chart")
+@router.get(
+    "/finance/chart",
+    dependencies=[Depends(rate_limit("finance-chart", 120, TEN_MIN_MS))],
+)
 async def get_chart(
     symbol: str = Query(..., min_length=1, max_length=15),
     timeframe: str = Query("1mo"),
@@ -106,13 +113,19 @@ async def get_chart(
     return {"symbol": normalized_symbol, "timeframe": timeframe, "data": data, "cached": False}
 
 
-@router.get("/finance/search")
+@router.get(
+    "/finance/search",
+    dependencies=[Depends(rate_limit("finance-search", 120, TEN_MIN_MS))],
+)
 async def search(query: str = Query(..., min_length=1, max_length=100)) -> dict:
     results = await search_stocks(query)
     return {"results": results}
 
 
-@router.get("/finance/heatmap")
+@router.get(
+    "/finance/heatmap",
+    dependencies=[Depends(rate_limit("finance-heatmap", 60, TEN_MIN_MS))],
+)
 async def get_heatmap(
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     list: Optional[str] = Query(None),
@@ -150,7 +163,10 @@ async def get_heatmap(
     return {"date": market_date, "stocks": stocks, "cached": False}
 
 
-@router.get("/finance/watchlist")
+@router.get(
+    "/finance/watchlist",
+    dependencies=[Depends(rate_limit("finance-watchlist-get", 120, TEN_MIN_MS))],
+)
 async def get_watchlist_with_quotes() -> dict:
     watchlist = get_watchlist()
 
@@ -186,7 +202,10 @@ async def get_watchlist_with_quotes() -> dict:
     return {"watchlist": watchlist_with_quotes}
 
 
-@router.post("/finance/watchlist")
+@router.post(
+    "/finance/watchlist",
+    dependencies=[Depends(rate_limit("finance-watchlist-post", 60, TEN_MIN_MS))],
+)
 async def add_watchlist_item(body: FinanceWatchlistActionRequestBody) -> dict:
     normalized_symbol = body.symbol.upper().strip()
 
@@ -202,7 +221,10 @@ async def add_watchlist_item(body: FinanceWatchlistActionRequestBody) -> dict:
     }
 
 
-@router.delete("/finance/watchlist")
+@router.delete(
+    "/finance/watchlist",
+    dependencies=[Depends(rate_limit("finance-watchlist-delete", 60, TEN_MIN_MS))],
+)
 async def remove_watchlist_item(body: FinanceWatchlistDeleteRequestBody) -> dict:
     remove_from_watchlist(body.id)
     return {"success": True, "message": "Stock removed from watchlist"}

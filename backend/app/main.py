@@ -10,11 +10,13 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import init_db
 from app.lib.logger.console import install_console_interceptor
+from app.lib.server import RateLimitExceeded, check_api_access
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("newsixity")
@@ -38,6 +40,37 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Newsixity", version="0.1.0", lifespan=lifespan)
+
+# Public API paths bypass auth (port of PUBLIC_API_PATHS in src/proxy.ts).
+PUBLIC_API_PATHS = {"/api/health"}
+
+
+@app.middleware("http")
+async def api_access_middleware(request: Request, call_next):
+    """Loopback-trust + token + CSRF gate over /api/* (port of src/proxy.ts).
+
+    Non-/api/ paths (docs, SPA static files) pass through untouched.
+    """
+    path = request.url.path
+    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
+        access = check_api_access(request)
+        if not access.ok:
+            return JSONResponse(
+                {"error": access.error or "Unauthorized"},
+                status_code=access.status or 401,
+            )
+    return await call_next(request)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(_request: Request, exc: RateLimitExceeded):
+    """Match Node's 429 body shape and Retry-After header exactly."""
+    return JSONResponse(
+        {"error": "Rate limit exceeded", "retryAfter": exc.retry_after},
+        status_code=429,
+        headers={"Retry-After": str(exc.retry_after)},
+    )
+
 
 # Wire routers
 from app.routers import (

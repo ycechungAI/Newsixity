@@ -1,6 +1,6 @@
 """Settings endpoints — /api/settings. Port of src/app/api/settings/route.ts."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.db.repository import (
     get_all_settings,
@@ -9,6 +9,7 @@ from app.db.repository import (
     set_setting,
     SettingsEncryptionRequiredError,
 )
+from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 from app.schemas import SettingsUpdateRequestBody
 
 router = APIRouter()
@@ -22,7 +23,10 @@ def _mask_api_key(key: str) -> str:
     return "•" * len(key)
 
 
-@router.get("/settings")
+@router.get(
+    "/settings",
+    dependencies=[Depends(rate_limit("settings-get", 120, TEN_MIN_MS))],
+)
 async def get_settings() -> dict:
     settings = get_all_settings()
 
@@ -42,7 +46,10 @@ async def get_settings() -> dict:
     }
 
 
-@router.post("/settings")
+@router.post(
+    "/settings",
+    dependencies=[Depends(rate_limit("settings-post", 60, TEN_MIN_MS))],
+)
 async def update_settings(body: SettingsUpdateRequestBody) -> dict:
     try:
         if body.brave_search_api_key is not None:

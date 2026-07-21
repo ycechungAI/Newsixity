@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.config import settings
 from app.db.repository import (
@@ -24,13 +24,17 @@ from app.db.repository import (
     MAX_UNSUMMARIZED_QUEUE,
 )
 from app.lib.logger.console import get_logs
+from app.lib.server.rate_limit import ONE_HOUR_MS, TEN_MIN_MS, rate_limit
 
 router = APIRouter()
 
 MAX_BACKUPS = 10
 
 
-@router.get("/console")
+@router.get(
+    "/console",
+    dependencies=[Depends(rate_limit("console-get", 120, TEN_MIN_MS))],
+)
 async def get_console_state() -> dict:
     queue = get_summarization_queue(20)
     queue_count = get_summarization_queue_count()
@@ -39,13 +43,19 @@ async def get_console_state() -> dict:
     return {"queue": queue, "queueCount": queue_count, "logs": logs}
 
 
-@router.delete("/console/queue")
+@router.delete(
+    "/console/queue",
+    dependencies=[Depends(rate_limit("console-queue-remove", 100, ONE_HOUR_MS))],
+)
 async def remove_from_queue(id: int = Query(..., gt=0)) -> dict:
     remove_article_from_queue(id)
     return {"success": True, "removedId": id}
 
 
-@router.post("/console/cull")
+@router.post(
+    "/console/cull",
+    dependencies=[Depends(rate_limit("console-cull", 10, ONE_HOUR_MS))],
+)
 async def cull_queue(limit: int = Query(0)) -> dict:
     before = get_summarization_queue_count()
     effective_limit = limit if limit > 0 else MAX_UNSUMMARIZED_QUEUE
@@ -74,7 +84,10 @@ def _cleanup_old_backups(backups_dir: Path, prefix: str) -> None:
         pass
 
 
-@router.post("/console/backup")
+@router.post(
+    "/console/backup",
+    dependencies=[Depends(rate_limit("console-backup", 3, ONE_HOUR_MS))],
+)
 async def create_backup() -> dict:
     backups_dir = settings.resolve_db_path().parent / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +123,10 @@ async def create_backup() -> dict:
     }
 
 
-@router.post("/console/stop")
+@router.post(
+    "/console/stop",
+    dependencies=[Depends(rate_limit("console-stop", 20, TEN_MIN_MS))],
+)
 async def stop_servers() -> dict:
     output_lines: list[str] = []
 
@@ -129,7 +145,10 @@ async def stop_servers() -> dict:
     }
 
 
-@router.post("/console/resummarize-failed")
+@router.post(
+    "/console/resummarize-failed",
+    dependencies=[Depends(rate_limit("console-resummarize-failed", 10, TEN_MIN_MS))],
+)
 async def resummarize_failed() -> dict:
     result = reset_failed_and_skipped_articles()
     return {
