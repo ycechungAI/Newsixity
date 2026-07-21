@@ -33,7 +33,7 @@
 
 ## Phase 3 — Tests & ops
 
-- [~] **[Haiku 4.5]** Stage 9 — port tests to pytest; **Sonnet 5** for `tests/security` (Haiku: 153 tests passing; Sonnet: pending)
+- [x] **[Haiku 4.5 / Sonnet 5]** Stage 9 — port tests to pytest. Haiku: 153 tests (basic/database). **Sonnet 5** ported `tests/security/{auth,input}.test.ts` (54 tests) → `backend/tests/security/test_{auth,input}_security.py`, verified against the actual Starlette `check_api_access` (loopback trust, CSRF/origin, token/admin-path gating) and Python utils (`strip_html`, `parse_http_url`, `normalize_title_for_hash`, `extract_video_info`) rather than re-testing the old Node mocks. 207 tests total, all passing.
 - [ ] **[Sonnet 5 / Opus 4.8]** Stage 10 — Sonnet: Dockerfile + start/stop scripts · Opus: old-vs-new parity sign-off
 
 ## Phase 4 — Slimming (can run in parallel; see Improvements.md)
