@@ -34,10 +34,9 @@ from app.lib.integrations.ollama import (
     is_ollama_available,
     summarize_article,
 )
+from app.lib.services.summarization import get_default_model
 
 logger = logging.getLogger("newsixity")
-
-DEFAULT_MODEL = "qwen3-coder-next:cloud"
 
 # Tracks whether a background batch is already running so runs don't pile up.
 _background_running = False
@@ -76,7 +75,8 @@ async def summarize_one(article: Article) -> bool:
     logger.info("[Newsixity] Calling summarizeArticle for article %s...", article.id)
     summary = await summarize_article(article.title, content)
     logger.info("[Newsixity] Got summary for article %s, updating DB...", article.id)
-    update_article_summary(article.id, summary, DEFAULT_MODEL)
+    model_used = await get_default_model()
+    update_article_summary(article.id, summary, model_used)
 
     logger.info(
         '[Newsixity] Summarized article %s: "%s..."', article.id, article.title[:50]
@@ -256,7 +256,8 @@ async def summarize_article_by_id(article_id: int) -> None:
             return
 
         summary = await summarize_article(article.title, article.content)
-        update_article_summary(article_id, summary, DEFAULT_MODEL)
+        model_used = await get_default_model()
+        update_article_summary(article_id, summary, model_used)
 
         logger.info(
             '[Newsixity] On-demand summarized article %s: "%s..."',
