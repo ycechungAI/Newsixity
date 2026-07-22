@@ -50,3 +50,6 @@ database.sqlite
 # typescript
 *.tsbuildinfo
 .venv/
+
+# claude code
+.claude/
