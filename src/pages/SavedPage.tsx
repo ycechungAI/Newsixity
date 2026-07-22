@@ -16,8 +16,7 @@ function getPerPage(viewMode: SavedViewMode) {
 }
 
 function toArticleListViewMode(mode: SavedViewMode): ViewMode {
-  if (mode === "cards") return "topics";
-  return mode;
+  return mode as ViewMode;
 }
 
 interface CategoryWithCounts extends Category {
