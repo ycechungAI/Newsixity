@@ -1,20 +1,7 @@
-name: Desktop app build
-
-# Builds the Tauri desktop app for macOS, Windows, and Linux. Each runner
-# freezes the backend for its own platform (PyInstaller doesn't cross-compile)
-# and produces its native installer format(s) via `tauri build --target all`
-# (dmg/app on macOS, msi/nsis on Windows, deb/appimage on Linux).
-#
-# CI builds ship WITHOUT the seed database: data/newsixity.db is gitignored
-# (it's the maintainer's live reading data, never committed), so these builds
-# start with an empty DB that populates on first RSS refresh. Local builds via
-# ./backend/build_sidecar.sh still bundle the seed automatically when present.
-#
-# Manual trigger only for now (workflow_dispatch) — wire up push/tag triggers
-# once the release process is decided.
+name: Desktop Build
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   build:
@@ -28,41 +15,35 @@ jobs:
             name: windows-x64
           - os: ubuntu-latest
             name: linux-x64
+
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux system dependencies (Tauri v2 requirements)
+      - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            build-essential \
-            curl \
-            wget \
-            file
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential curl wget file
 
-      - name: Set up Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Set up Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Create Python venv and install backend deps
+      - name: Setup Python venv
         shell: bash
         run: |
           python -m venv .venv
@@ -74,22 +55,16 @@ jobs:
           pip install -U pip
           pip install -e "./backend[integrations,desktop]"
 
-      - name: Build sidecar (frontend + frozen backend)
+      - name: Build sidecar
         shell: bash
         run: ./backend/build_sidecar.sh
 
-      - name: Build Tauri app
+      - name: Build Tauri
         run: npx tauri build
 
-      - name: Upload bundle artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: newsixity-${{ matrix.name }}
-          path: |
-            src-tauri/target/release/bundle/**/*.app
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.AppImage
+          path: src-tauri/target/release/bundle/
           if-no-files-found: warn
