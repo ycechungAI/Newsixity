@@ -50,6 +50,24 @@ COLORS = {
 _background_running = False
 
 
+def _is_video_link(url: str) -> bool:
+    """Check if URL is a video link (YouTube, Vimeo, TikTok, etc.)."""
+    video_domains = [
+        "youtube.com",
+        "youtu.be",
+        "vimeo.com",
+        "tiktok.com",
+        "instagram.com",
+        "twitch.tv",
+        "dailymotion.com",
+        "rumble.com",
+        "bitchute.com",
+        "odysee.com",
+    ]
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in video_domains)
+
+
 async def _check_link_status(url: str) -> str:
     """Check if a link is accessible. Returns status like '200', 'Error 404', 'Error: timeout', etc."""
     try:
@@ -74,6 +92,16 @@ async def summarize_one(article: Article) -> bool:
     missing, marks the article skipped so it leaves the queue.
     """
     content = article.content
+
+    # Skip video links (YouTube, Vimeo, etc.) - not article content
+    if article.link and _is_video_link(article.link):
+        update_article_summary(article.id, "[Video content - not summarizable]", "skipped")
+        logger.info(
+            f'{COLORS["warning"]}[Newsixity] Skipped article %s (video link): "%s..."{COLORS["reset"]}',
+            article.id,
+            article.title[:50],
+        )
+        return False
 
     # If no content from RSS, try fetching from the original URL.
     if (not content or len(content) <= 10) and article.link:
