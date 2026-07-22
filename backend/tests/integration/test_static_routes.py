@@ -1,4 +1,4 @@
-"""Integration smoke test for NextExportStaticFiles clean-URL routing.
+"""Integration smoke test for SPAStaticFiles fallback routing.
 
 Boots the real FastAPI `app` (no lifespan, so no DB init / background jobs —
 static file serving is wired at module import time in app/main.py, not in
@@ -14,7 +14,7 @@ client = TestClient(app)
 
 
 class TestCleanUrlPages:
-    """Next static-export clean URLs must resolve to their {path}.html file."""
+    """Client-side routes (React Router) must fall back to index.html."""
 
     def test_homepage_serves_index(self):
         resp = client.get("/")
@@ -43,25 +43,31 @@ class TestCleanUrlPages:
     def test_weather_page(self):
         assert client.get("/weather").status_code == 200
 
-    def test_explicit_html_extension_still_works(self):
-        resp = client.get("/finance.html")
+    def test_dynamic_article_route(self):
+        """/article/:id is a path param — no build-time enumeration needed."""
+        resp = client.get("/article/12345")
         assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
 
 
 class TestUnknownRoutes:
-    def test_unknown_path_returns_exported_404_page(self):
+    """Unknown paths still get index.html (200), not a server 404 — React
+    Router's own NotFoundPage decides what the user sees."""
+
+    def test_unknown_path_falls_back_to_index(self):
         resp = client.get("/this-route-does-not-exist-xyz")
-        assert resp.status_code == 404
+        assert resp.status_code == 200
         assert "text/html" in resp.headers["content-type"]
 
-    def test_unknown_nested_path_returns_404(self):
+    def test_unknown_nested_path_falls_back_to_index(self):
         resp = client.get("/finance/does-not-exist-xyz")
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
 
 
 class TestStaticAssets:
     """JS/CSS bundles must still be served as exact-path assets, unaffected
-    by the clean-URL fallback logic."""
+    by the SPA-fallback logic."""
 
     def test_favicon_served(self):
         resp = client.get("/favicon.ico")
@@ -70,12 +76,12 @@ class TestStaticAssets:
     def test_js_chunk_served_with_js_content_type(self):
         import pathlib
 
-        out_dir = pathlib.Path(__file__).resolve().parents[3] / "out"
-        chunks_dir = out_dir / "_next" / "static" / "chunks"
-        js_files = list(chunks_dir.glob("*.js"))
-        assert js_files, "expected at least one built JS chunk in out/_next/static/chunks"
+        dist_dir = pathlib.Path(__file__).resolve().parents[3] / "dist"
+        assets_dir = dist_dir / "assets"
+        js_files = list(assets_dir.glob("*.js"))
+        assert js_files, "expected at least one built JS chunk in dist/assets"
 
-        url_path = "/" + str(js_files[0].relative_to(out_dir))
+        url_path = "/" + str(js_files[0].relative_to(dist_dir))
         resp = client.get(url_path)
         assert resp.status_code == 200
         assert "javascript" in resp.headers["content-type"]

@@ -13,13 +13,13 @@ NC='\033[0m' # No Color
 echo -e "${RED}Stopping Newsixity services...${NC}"
 echo ""
 
-# Stop Next.js dev server
-if pgrep -f "next dev" > /dev/null; then
-    echo -e "${BLUE}→ Stopping Next.js dev server${NC}"
-    pkill -f "next dev"
-    echo -e "${GREEN}✓ Next.js stopped${NC}"
+# Stop Vite dev server
+if pgrep -f "vite" > /dev/null; then
+    echo -e "${BLUE}→ Stopping Vite dev server${NC}"
+    pkill -f "vite"
+    echo -e "${GREEN}✓ Vite stopped${NC}"
 else
-    echo -e "${YELLOW}⚠ Next.js is not running${NC}"
+    echo -e "${YELLOW}⚠ Vite is not running${NC}"
 fi
 
 # Stop Ollama server
