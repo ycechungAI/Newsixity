@@ -51,7 +51,7 @@ _background_running = False
 
 
 def _is_video_link(url: str) -> bool:
-    """Check if URL is a video link (YouTube, Vimeo, TikTok, etc.)."""
+    """Check if URL is a video link (YouTube, Vimeo, TikTok, direct files, etc.)."""
     video_domains = [
         "youtube.com",
         "youtu.be",
@@ -63,9 +63,20 @@ def _is_video_link(url: str) -> bool:
         "rumble.com",
         "bitchute.com",
         "odysee.com",
+        "filedn.com",  # pCloud video hosting
+        "zippyshare.com",
+        "mediafire.com",
     ]
+    video_extensions = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".m3u8"]
+
     url_lower = url.lower()
-    return any(domain in url_lower for domain in video_domains)
+    # Check domains
+    if any(domain in url_lower for domain in video_domains):
+        return True
+    # Check direct video file extensions
+    if any(url_lower.endswith(ext) for ext in video_extensions):
+        return True
+    return False
 
 
 async def _check_link_status(url: str) -> str:
