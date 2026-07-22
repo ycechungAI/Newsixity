@@ -15,6 +15,18 @@ echo ""
 
 echo "🐍 Setting up Python virtual environment..."
 
+# venv's activate script/shebangs bake in an absolute path at creation time.
+# If this folder was renamed or moved since, those paths point nowhere and
+# every python/pip/uvicorn invocation breaks with "bad interpreter". Detect
+# that mismatch and rebuild .venv automatically instead of failing.
+if [ -d ".venv" ]; then
+    VENV_RECORDED_PATH="$(grep -m1 '^VIRTUAL_ENV=' .venv/bin/activate 2>/dev/null | cut -d'"' -f2)"
+    if [ "$VENV_RECORDED_PATH" != "$REPO_ROOT/.venv" ]; then
+        echo "   ⚠️  .venv points at a stale path (folder renamed/moved) — rebuilding..."
+        rm -rf .venv
+    fi
+fi
+
 if [ ! -d ".venv" ]; then
     echo "   Creating .venv..."
     python3 -m venv .venv
