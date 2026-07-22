@@ -39,7 +39,7 @@ echo ""
 echo "🧹 Cleaning cache directories..."
 
 # Frontend caches
-rm -rf .next .turbo node_modules/.cache 2>/dev/null || true
+rm -rf node_modules/.cache 2>/dev/null || true
 echo "   ✓ Frontend caches cleared"
 
 # Backend caches
@@ -75,8 +75,8 @@ echo "🔌 Checking port availability..."
 PORTS_OK=true
 
 if command -v lsof &> /dev/null; then
-    if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1; then
-        echo "   ⚠️  Port 3000 in use (kill with: lsof -ti:3000 | xargs kill -9)"
+    if lsof -Pi :5173 -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "   ⚠️  Port 5173 in use (kill with: lsof -ti:5173 | xargs kill -9)"
         PORTS_OK=false
     fi
 
@@ -87,7 +87,7 @@ if command -v lsof &> /dev/null; then
 fi
 
 if [ "$PORTS_OK" = true ]; then
-    echo "   ✓ Ports 3000 & 8000 available"
+    echo "   ✓ Ports 5173 & 8000 available"
 fi
 
 # ============================================================================
@@ -104,7 +104,7 @@ cd ..
 # Give backend time to start
 sleep 2
 
-echo "🎨 Starting frontend (Next.js on :3000)..."
+echo "🎨 Starting frontend (Vite on :5173)..."
 npm run dev &
 FRONTEND_PID=$!
 
@@ -113,7 +113,7 @@ trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true; deactivate 2>/dev/nul
 
 echo ""
 echo "✅ Both servers running:"
-echo "   Frontend:  http://localhost:3000"
+echo "   Frontend:  http://localhost:5173"
 echo "   Backend:   http://localhost:8000"
 echo "   API Docs:  http://localhost:8000/docs"
 echo "   Logs:      Frontend (^C to stop), Backend (/logs endpoint)"

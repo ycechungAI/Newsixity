@@ -70,19 +70,15 @@ export default function FinanceNewsPage() {
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-          Finance News
-        </h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Latest articles from MarketWatch, CNBC, Yahoo Finance, and more
-        </p>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <div className="page-title">Finance News</div>
+          <div className="page-sub">Latest articles from MarketWatch, CNBC, Yahoo Finance, and more</div>
+        </div>
       </div>
 
-      <div className="mb-4 flex items-center justify-end">
-        <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
-      </div>
+      <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
 
       {!loading && total === 0 ? (
         <EmptyState
