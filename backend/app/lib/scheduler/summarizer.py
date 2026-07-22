@@ -38,6 +38,14 @@ from app.lib.services.summarization import get_default_model
 
 logger = logging.getLogger("newsixity")
 
+# ANSI color codes for terminal output
+COLORS = {
+    "success": "\033[92m",    # Light green
+    "warning": "\033[93m",    # Yellow
+    "error": "\033[91m",      # Light red
+    "reset": "\033[0m",       # Reset
+}
+
 # Tracks whether a background batch is already running so runs don't pile up.
 _background_running = False
 
@@ -66,7 +74,7 @@ async def summarize_one(article: Article) -> bool:
     if not content or len(content) <= 10:
         update_article_summary(article.id, "[No content to summarize]", "skipped")
         logger.info(
-            '[Newsixity] Skipped article %s (no content): "%s..."',
+            f'{COLORS["warning"]}[Newsixity] Skipped article %s (no content): "%s..."{COLORS["reset"]}',
             article.id,
             article.title[:50],
         )
@@ -79,7 +87,7 @@ async def summarize_one(article: Article) -> bool:
     update_article_summary(article.id, summary, model_used)
 
     logger.info(
-        '[Newsixity] Summarized article %s: "%s..."', article.id, article.title[:50]
+        f'{COLORS["success"]}[Newsixity] Summarized article %s: "%s..."{COLORS["reset"]}', article.id, article.title[:50]
     )
     return True
 
@@ -108,6 +116,9 @@ async def _process_batch(articles: list[Article], label: str, errors: list[str])
                 raise
             except Exception as e:  # noqa: BLE001
                 error_msg = str(e)
+                logger.error(
+                    f'{COLORS["error"]}[Newsixity] ERROR summarizing urgent article %s: %s{COLORS["reset"]}', urgent[0].id, error_msg
+                )
                 errors.append(f"Article {urgent[0].id}: {error_msg}")
                 # Mark failed to prevent an infinite retry loop.
                 update_article_summary(
@@ -124,7 +135,7 @@ async def _process_batch(articles: list[Article], label: str, errors: list[str])
         except Exception as e:  # noqa: BLE001
             error_msg = str(e)
             logger.error(
-                "[Newsixity] ERROR summarizing article %s: %s", article.id, error_msg
+                f'{COLORS["error"]}[Newsixity] ERROR summarizing article %s: %s{COLORS["reset"]}', article.id, error_msg
             )
             errors.append(f"Article {article.id}: {error_msg}")
             update_article_summary(
