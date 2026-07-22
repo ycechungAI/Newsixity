@@ -136,7 +136,6 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
         {isVideo ? (
           <VideoEmbed url={safeOriginalUrl} title={article.title} />
         ) : article.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={article.imageUrl}
             alt=""
