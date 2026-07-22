@@ -44,6 +44,10 @@
 - [x] **[Haiku 4.5]** Pick one package manager; remove `pnpm` from deps + pnpm-lock.yaml (`45abe48`)
 - [ ] **[Sonnet 5]** Carry perf TODOs #19–24 into the port (Improvements.md §D) — future work
 
+## Future enhancements (deferred, scope control)
+
+- [ ] **[Sonnet 5]** Preference-based ranking — learn from reading history (clicks, time-on-article) to boost preferred categories/feeds in scoring. Low performance impact; requires new `reading_history` table + per-view logging. No external model needed (statistical scoring only). **Decision: hold for post-MVP** (adds schema + tracking complexity without critical UX improvement).
+
 ## Definition of done (spec §8)
 
 - [ ] All 24 endpoints match current response shapes
