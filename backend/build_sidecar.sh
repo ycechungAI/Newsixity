@@ -25,9 +25,20 @@ echo "✓ Frontend built to dist/"
 echo ""
 
 # Step 2: Freeze the backend with PyInstaller.
+# Venv layout differs by platform: POSIX venvs put scripts in bin/, Windows
+# venvs (including CI runners under Git Bash) put them in Scripts/.
+if [ -x ".venv/bin/pyinstaller" ]; then
+    PYINSTALLER="$REPO_ROOT/.venv/bin/pyinstaller"
+elif [ -x ".venv/Scripts/pyinstaller.exe" ]; then
+    PYINSTALLER="$REPO_ROOT/.venv/Scripts/pyinstaller.exe"
+else
+    echo "ERROR: pyinstaller not found in .venv (checked bin/ and Scripts/)" >&2
+    exit 1
+fi
+
 echo "🧊 Freezing backend with PyInstaller..."
 cd backend
-../.venv/bin/pyinstaller newsixity-backend.spec
+"$PYINSTALLER" newsixity-backend.spec
 echo "✓ Backend frozen to dist/newsixity-backend/"
 cd ..
 echo ""
@@ -37,7 +48,7 @@ echo "📍 Installing backend resource for Tauri..."
 rm -rf src-tauri/resources/newsixity-backend
 mkdir -p src-tauri/resources
 cp -R backend/dist/newsixity-backend src-tauri/resources/newsixity-backend
-chmod +x src-tauri/resources/newsixity-backend/newsixity-backend
+chmod +x src-tauri/resources/newsixity-backend/newsixity-backend* 2>/dev/null || true
 echo "✓ Resource installed: src-tauri/resources/newsixity-backend/"
 echo ""
 

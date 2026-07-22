@@ -1,6 +1,6 @@
 # Newsixity Desktop App
 
-Newsixity is packaged as a native macOS desktop application using Tauri, a lightweight framework that uses the OS's built-in WebView instead of bundling Chromium.
+Newsixity is packaged as a native desktop application using Tauri, a lightweight framework that uses the OS's built-in WebView instead of bundling Chromium. macOS is the primary, hand-tested target; Windows and Linux builds are produced via CI (see [Other Platforms](#other-platforms-windows--linux) below) and share the same codepath but are less battle-tested.
 
 ## Prerequisites
 
@@ -133,3 +133,11 @@ To work on the desktop app during development:
 3. **Rust/Tauri changes:** Edit `src-tauri/src/` and run `npx tauri build` to recompile and test.
 
 The dev workflow with `npm run dev` and `start.sh` continues to work unchanged for testing locally without packaging.
+
+## Other Platforms (Windows & Linux)
+
+`.github/workflows/desktop-build.yml` builds Windows (`.msi`/`.exe`) and Linux (`.deb`/`.AppImage`) installers via a GitHub Actions matrix, alongside macOS. Trigger it manually from the Actions tab (`workflow_dispatch`) — it's not wired to push/tag triggers yet.
+
+Each runner freezes its own backend (PyInstaller doesn't cross-compile) and calls `./backend/build_sidecar.sh` + `npx tauri build`, same as the local macOS flow. The only difference: **CI builds ship with an empty database**, not your seeded one. `data/newsixity.db` is gitignored (it's your live reading data — saved articles, read history — and never gets committed), so CI runners simply don't have it. The app already handles a missing seed gracefully: it logs a warning and starts with a fresh, empty database that populates on the first RSS refresh. If you want a seeded CI build, you'd need to separately provision the seed DB to the runner (e.g. as a private release asset) — not currently wired up.
+
+Building Windows/Linux locally instead of via CI works the same way as macOS (`build_sidecar.sh` then `tauri build`), but you need to be running on that OS — PyInstaller can't cross-freeze the Python backend for a different platform than it's running on.
