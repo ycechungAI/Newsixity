@@ -1,5 +1,57 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, ReactNode } from "react";
 import { Link } from "react-router-dom";
+
+function isSystemMessage(text: string): boolean {
+  return /\033\[(92m|93m|91m)/g.test(text);
+}
+
+function parseAnsiColors(text: string): ReactNode[] {
+  const ansiColorMap: Record<string, string> = {
+    "[92m": "#4ade80",  // Light green (success)
+    "[93m": "#facc15",  // Yellow (warning/skipped)
+    "[91m": "#f87171",  // Light red (error/failed)
+    "[0m": "inherit",   // Reset
+  };
+
+  const parts: ReactNode[] = [];
+  let currentColor = "inherit";
+  let currentText = "";
+  let i = 0;
+
+  while (i < text.length) {
+    let found = false;
+    for (const [code, color] of Object.entries(ansiColorMap)) {
+      if (text.startsWith(code, i)) {
+        if (currentText) {
+          parts.push(
+            <span key={parts.length} style={{ color: currentColor }}>
+              {currentText}
+            </span>
+          );
+          currentText = "";
+        }
+        currentColor = color;
+        i += code.length;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      currentText += text[i];
+      i++;
+    }
+  }
+
+  if (currentText) {
+    parts.push(
+      <span key={parts.length} style={{ color: currentColor }}>
+        {currentText}
+      </span>
+    );
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
 
 interface QueueItem {
   id: number;
@@ -42,12 +94,13 @@ export default function ConsolePage() {
   const [showPruneConfirm, setShowPruneConfirm] = useState(false);
   const [scoreThreshold, setScoreThreshold] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logTab, setLogTab] = useState<"system" | "console">("system");
   const logsRef = useRef<HTMLDivElement>(null);
   const pruneLoadingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadData();
-    const t = setInterval(loadData, 2000);
+    const t = setInterval(loadData, 500);  // Update every 500ms for real-time display
     return () => clearInterval(t);
   }, []);
 
@@ -225,7 +278,7 @@ export default function ConsolePage() {
             {loading ? (
               <div style={{ color: "#166534", fontSize: 10 }}>Loading…</div>
             ) : queue.length > 0 ? (
-              queue.map((item, i) => (
+              [...queue].reverse().map((item, i) => (
                 <div key={item.id} className="con-queue-item" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="con-queue-num">{i + 1}.</span>
                   <span className="con-queue-title" style={{ flex: 1 }}>{item.title}</span>
@@ -422,26 +475,48 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
         <div className="con-section">
           <div className="con-section-head">
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span className="con-section-title">System Logs</span>
+              <span className="con-section-title">Logs</span>
               <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#4ade80" }}>
                 <span className="con-pulse" /> LIVE
               </span>
             </div>
-            <button
-              className={`con-btn ${autoScroll ? "con-btn-green" : ""}`}
-              style={!autoScroll ? { color: "#555", borderColor: "#333" } : {}}
-              onClick={() => setAutoScroll(s => !s)}
-            >
-              Scroll: {autoScroll ? "ON" : "OFF"}
-            </button>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 2 }}>
+                <button
+                  className={`con-btn ${logTab === "system" ? "con-btn-green" : ""}`}
+                  style={logTab !== "system" ? { color: "#555", borderColor: "#333" } : {}}
+                  onClick={() => setLogTab("system")}
+                  title="Article summarization status"
+                >
+                  System Messages
+                </button>
+                <button
+                  className={`con-btn ${logTab === "console" ? "con-btn-green" : ""}`}
+                  style={logTab !== "console" ? { color: "#555", borderColor: "#333" } : {}}
+                  onClick={() => setLogTab("console")}
+                  title="General console output"
+                >
+                  Console
+                </button>
+              </div>
+              <button
+                className={`con-btn ${autoScroll ? "con-btn-green" : ""}`}
+                style={!autoScroll ? { color: "#555", borderColor: "#333" } : {}}
+                onClick={() => setAutoScroll(s => !s)}
+              >
+                Scroll: {autoScroll ? "ON" : "OFF"}
+              </button>
+            </div>
           </div>
 
           <div ref={logsRef} className="con-log-box">
-            {logs.length > 0 ? logs.map((log, i) => (
+            {logs.length > 0 ? logs
+              .filter(log => logTab === "system" ? isSystemMessage(log.message) : !isSystemMessage(log.message))
+              .map((log, i) => (
               <div key={i} className="con-log-row">
                 <span className="con-log-ts">[{log.timestamp}]</span>
                 <span className={`con-log-lvl con-log-${log.level}`}>{log.level.toUpperCase()}</span>
-                <span className="con-log-msg">{log.message}</span>
+                <span className="con-log-msg">{parseAnsiColors(log.message)}</span>
               </div>
             )) : (
               <div style={{ color: "#166534", fontSize: 10 }}>No recent log entries</div>
