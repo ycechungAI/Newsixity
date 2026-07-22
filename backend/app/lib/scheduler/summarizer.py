@@ -93,6 +93,16 @@ async def summarize_one(article: Article) -> bool:
     """
     content = article.content
 
+    # Skip manual links (user-curated content, not RSS articles)
+    if article.feed_name == "Manual Links":
+        update_article_summary(article.id, "[Manual link - not summarizable]", "skipped")
+        logger.info(
+            f'{COLORS["warning"]}[Newsixity] Skipped article %s (manual link): "%s..."{COLORS["reset"]}',
+            article.id,
+            article.title[:50],
+        )
+        return False
+
     # Skip video links (YouTube, Vimeo, etc.) - not article content
     if article.link and _is_video_link(article.link):
         update_article_summary(article.id, "[Video content - not summarizable]", "skipped")
