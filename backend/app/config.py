@@ -10,6 +10,7 @@ backend is a drop-in on the same machine:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pydantic import Field
@@ -27,7 +28,8 @@ class Settings(BaseSettings):
     db_path: str | None = Field(default=None)
     disable_background_services: bool = Field(default=False)
 
-    host: str = Field(default="0.0.0.0")
+    # Frozen (packaged) mode binds to localhost only; dev mode binds to 0.0.0.0.
+    host: str = Field(default="127.0.0.1" if getattr(sys, "frozen", False) else "0.0.0.0")
     port: int = Field(default=8000)
 
     # Batch size for resummarization endpoint. 0 = unlimited (for local LLM).
@@ -52,13 +54,30 @@ class Settings(BaseSettings):
         """Resolve the SQLite path, matching the Node app's rules.
 
         Absolute override wins; a relative override resolves against the repo
-        root; otherwise fall back to the existing ``data/newsixity.db``.
+        root; otherwise use the app-data directory in frozen (packaged) mode,
+        or the repo data/ directory in dev.
         """
         override = (self.db_path or "").strip()
-        if not override:
-            return DEFAULT_DB_PATH
-        p = Path(override)
-        return p if p.is_absolute() else (REPO_ROOT / p)
+        if override:
+            p = Path(override)
+            return p if p.is_absolute() else (REPO_ROOT / p)
+
+        # Frozen (packaged) mode: use per-user app-data directory.
+        if getattr(sys, "frozen", False):
+            if sys.platform == "darwin":
+                # macOS: ~/Library/Application Support/Newsixity/
+                app_data = Path.home() / "Library" / "Application Support" / "Newsixity"
+            elif sys.platform == "win32":
+                # Windows: %APPDATA%/Newsixity/
+                app_data = Path(Path.home() / "AppData" / "Roaming" / "Newsixity")
+            else:
+                # Linux: ~/.local/share/newsixity/
+                app_data = Path.home() / ".local" / "share" / "newsixity"
+            app_data.mkdir(parents=True, exist_ok=True)
+            return app_data / "newsixity.db"
+
+        # Dev mode: use repo data/ directory.
+        return DEFAULT_DB_PATH
 
 
 settings = Settings()
