@@ -578,12 +578,17 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
     - Relevance/promotion (20 points)
     - Recency bonus (10 points)
     - No summary penalty (-20 points)
+    - Dead link: score 0 (always prune)
     """
     from datetime import datetime, timedelta
 
+    # Dead/unavailable links have no value—always prune them
+    if article.summary and article.summary.startswith("[Link unavailable:"):
+        return 0.0
+
     score = 0.0
 
-    # Saved articles should almost never be deleted
+    # Saved articles should almost never be deleted (except dead links)
     if article.is_saved:
         score += 40
 
