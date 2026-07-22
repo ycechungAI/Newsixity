@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from app.config import settings
 from app.db.repository import (
     cull_unsummarized_queue_to_limit,
+    cleanup_unsummarizable_articles,
     get_summarization_queue,
     get_summarization_queue_count,
     remove_article_from_queue,
@@ -155,4 +156,18 @@ async def resummarize_failed() -> dict:
         "success": True,
         "count": result["count"],
         "message": f"Reset {result['count']} failed/skipped/timed-out articles for resummarization. They will appear in the queue.",
+    }
+
+
+@router.post(
+    "/console/cleanup-unsummarizable",
+    dependencies=[Depends(rate_limit("console-cleanup", 10, TEN_MIN_MS))],
+)
+async def cleanup_unsummarizable() -> dict:
+    """Delete articles marked as [No content to summarize] - these cannot ever be summarized."""
+    result = cleanup_unsummarizable_articles()
+    return {
+        "success": True,
+        "deleted": result["deleted"],
+        "message": result["message"],
     }
