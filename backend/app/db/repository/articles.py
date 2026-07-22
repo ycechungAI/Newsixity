@@ -551,7 +551,10 @@ def mark_stuck_unsummarized_timed_out() -> int:
 
 def reset_failed_and_skipped_articles() -> dict:
     """Clear summary/summary_model for articles marked failed, skipped, or timed out,
-    so the summarizer will retry them. Returns {"count": <rows affected>}."""
+    so the summarizer will retry them. Returns {"count": <rows affected>}.
+
+    Does NOT reset: manual links, videos, dead links (leave them marked permanently).
+    """
     with SessionLocal() as db:
         result = db.execute(
             update(ArticleModel)
