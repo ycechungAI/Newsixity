@@ -1,17 +1,13 @@
-"use client";
-
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export function RefreshButton() {
   const [busy, setBusy] = useState(false);
-  const router = useRouter();
 
   async function refresh() {
     setBusy(true);
     try {
       await fetch("/api/feeds/refresh", { method: "POST" });
-      router.refresh();
+      window.dispatchEvent(new CustomEvent("feeds-refreshed"));
     } catch { /* silent */ } finally {
       setBusy(false);
     }

@@ -1,7 +1,4 @@
-"use client";
-
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 interface ReadToggleToolbarProps {
   autoMarkRead: boolean;
@@ -17,7 +14,6 @@ export default function ReadToggleToolbar({
   categorySlug,
 }: ReadToggleToolbarProps) {
   const [marking, setMarking] = useState(false);
-  const router = useRouter();
 
   async function markAllRead() {
     if (marking || unreadCount === 0) return;
@@ -31,10 +27,7 @@ export default function ReadToggleToolbar({
       if (res.ok) {
         const data = await res.json();
         if (data.marked > 0) {
-          window.dispatchEvent(new CustomEvent("bulk-mark-read", {
-            detail: { categorySlug: categorySlug ?? null, count: data.marked },
-          }));
-          router.refresh();
+          window.dispatchEvent(new CustomEvent("feeds-refreshed"));
         }
       }
     } catch { /* silent */ } finally {

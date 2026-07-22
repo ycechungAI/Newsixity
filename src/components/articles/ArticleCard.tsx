@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import type { Article } from "@/types";
 import { timeAgo } from "@/lib/utils/date";
 import { truncate, stripHtml } from "@/lib/utils/sanitize";
@@ -145,7 +145,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
           />
         ) : null}
         <div className="card-body">
-          <Link href={`/article?id=${article.id}`} className="card-title">{article.title}</Link>
+          <Link to={`/article/${article.id}`} className="card-title">{article.title}</Link>
           <div className="card-meta">{meta}</div>
           {preview && <div className="card-preview">{preview}</div>}
           <div className="card-actions">
@@ -175,7 +175,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     <li ref={(node) => { cardRef.current = node; }} className={`article-item${isRead ? " is-read" : ""}`}>
       <span className="article-dot" />
       <div className="article-body">
-        <Link href={`/article?id=${article.id}`} className="article-title">
+        <Link to={`/article/${article.id}`} className="article-title">
           {article.title}
         </Link>
         <div className="article-meta">{meta}</div>
