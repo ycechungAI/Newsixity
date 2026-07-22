@@ -567,14 +567,62 @@ def reset_failed_and_skipped_articles() -> dict:
         return {"count": result.rowcount}
 
 
+def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0) -> float:
+    """Calculate engagement score for an article (0-100).
+
+    Higher scores = keep this article when choosing between duplicates.
+    Factors:
+    - Saved status (40 points)
+    - Unread status (30 points)
+    - Relevance/promotion (20 points)
+    - Recency bonus (10 points)
+    """
+    from datetime import datetime, timedelta
+
+    score = 0.0
+
+    # Saved articles should almost never be deleted
+    if article.is_saved:
+        score += 40
+
+    # Unread articles are more valuable (user hasn't processed them yet)
+    if not article.is_read:
+        score += 30
+
+    # Promoted/high-relevance articles are more valuable
+    if article.is_promoted:
+        score += 15
+    if article.relevance_score and article.relevance_score > 0:
+        score += min(5, article.relevance_score / 20)  # Cap at 5 points
+
+    # Recency bonus: articles from last 7 days get +10, decreases with age
+    if article.published_at:
+        try:
+            now = datetime.now()
+            pub_date = datetime.fromisoformat(article.published_at.replace('Z', '+00:00'))
+            days_old = (now - pub_date).days
+            if days_old <= 7:
+                score += 10
+            elif days_old <= 30:
+                score += 5
+        except:
+            pass
+
+    # Feed quality (source_weight) provides small boost
+    score += feed_weight - 1.0  # 0-based adjustment (1.0 = neutral)
+
+    return min(100, score)  # Cap at 100
+
+
 def get_prunable_articles() -> dict:
     """Analyze articles for pruning and return a preview of what would be deleted.
 
     Strategies:
-    1. Similarity-based: Group by title_hash, keep best article per group
+    1. Similarity-based: Group by title_hash, keep highest-scoring article per group
     2. Preserve user priorities: Never delete saved or unread articles
     3. Time-based: Delete articles >6 months old, but keep current year (2026)
     4. Skip articles without summaries
+    5. Engagement scoring: Within duplicates, keep the most engaging article
 
     Returns dict with:
     - total_articles: Total count
@@ -622,16 +670,34 @@ def get_prunable_articles() -> dict:
         similar_ids = []
 
         for title_hash, count in similar_candidates:
-            # Get all articles with this hash, sorted by published_at desc (newest first)
-            articles = db.execute(
-                select(ArticleModel.id)
+            # Get all articles with this hash, including feed info for scoring
+            articles_with_feed = db.execute(
+                select(
+                    ArticleModel,
+                    FeedModel.source_weight.label("feed_weight"),
+                )
+                .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
                 .where(ArticleModel.title_hash == title_hash)
-                .order_by(ArticleModel.published_at.desc())
-            ).scalars().all()
+            ).all()
 
-            # Keep the first (newest), delete the rest
-            if articles:
-                to_delete = articles[1:]  # Skip the first/best one
+            if articles_with_feed:
+                # Score each article and keep the best one
+                scored = [
+                    {
+                        "id": article.id,
+                        "score": _calculate_engagement_score(article, feed_weight or 1.0),
+                        "article": article,
+                    }
+                    for article, feed_weight in articles_with_feed
+                ]
+
+                # Sort by score descending (highest score first)
+                scored.sort(key=lambda x: x["score"], reverse=True)
+
+                # Keep the best, delete the rest
+                best_id = scored[0]["id"]
+                to_delete = [s["id"] for s in scored[1:]]
+
                 duplicates_to_delete += len(to_delete)
                 similar_ids.extend(to_delete[:50])  # Preview limit
 
@@ -683,7 +749,8 @@ def get_prunable_articles() -> dict:
 def prune_articles() -> dict:
     """Execute article pruning: delete duplicates and old articles.
 
-    Uses same logic as get_prunable_articles(). Returns count of deleted articles.
+    Uses engagement scoring to keep the best article per duplicate cluster.
+    Returns count of deleted articles.
     """
     from datetime import datetime, timedelta
 
@@ -694,7 +761,7 @@ def prune_articles() -> dict:
 
         deleted_count = 0
 
-        # Delete duplicate articles (keeping the newest per title_hash)
+        # Delete duplicate articles (keeping the highest-scoring per title_hash)
         duplicates = db.execute(
             select(ArticleModel.title_hash, func.count(ArticleModel.id).label("count"))
             .where(
@@ -710,18 +777,35 @@ def prune_articles() -> dict:
         ).all()
 
         for title_hash, _ in duplicates:
-            articles = db.execute(
-                select(ArticleModel.id)
-                .where(ArticleModel.title_hash == title_hash)
-                .order_by(ArticleModel.published_at.desc())
-            ).scalars().all()
-
-            if articles:
-                to_delete = articles[1:]
-                db.execute(
-                    delete(ArticleModel).where(ArticleModel.id.in_(to_delete))
+            articles_with_feed = db.execute(
+                select(
+                    ArticleModel,
+                    FeedModel.source_weight.label("feed_weight"),
                 )
-                deleted_count += len(to_delete)
+                .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+                .where(ArticleModel.title_hash == title_hash)
+            ).all()
+
+            if articles_with_feed:
+                # Score each article and keep the best one
+                scored = [
+                    {
+                        "id": article.id,
+                        "score": _calculate_engagement_score(article, feed_weight or 1.0),
+                    }
+                    for article, feed_weight in articles_with_feed
+                ]
+
+                # Sort by score descending
+                scored.sort(key=lambda x: x["score"], reverse=True)
+
+                # Keep the best, delete the rest
+                to_delete = [s["id"] for s in scored[1:]]
+                if to_delete:
+                    db.execute(
+                        delete(ArticleModel).where(ArticleModel.id.in_(to_delete))
+                    )
+                    deleted_count += len(to_delete)
 
         # Delete old articles (count first)
         old_count_result = db.execute(

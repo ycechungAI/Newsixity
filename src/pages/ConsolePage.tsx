@@ -276,7 +276,18 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
             {!prunePreview ? (
               <div>
                 <div className="con-backup-note" style={{ marginBottom: 8 }}>
-                  Smart pruning removes duplicate articles, old content (6+ months), and preserves saved/unread articles.
+                  Smart pruning removes duplicates and old content while preserving your saved/unread articles.
+                  <details style={{ marginTop: 6, fontSize: 11, color: "#666" }}>
+                    <summary style={{ cursor: "pointer" }}>Scoring strategy (click to expand)</summary>
+                    <div style={{ marginTop: 4, paddingLeft: 8 }}>
+                      • Saved status: +40 pts (almost never delete)<br/>
+                      • Unread status: +30 pts (user hasn't read yet)<br/>
+                      • Promoted/relevance: +15-20 pts (high-quality articles)<br/>
+                      • Recency: +5-10 pts (newer is better)<br/>
+                      • Feed quality: +0-1 pts (trusted sources)<br/>
+                      When duplicates exist, keeps the highest-scoring article.
+                    </div>
+                  </details>
                 </div>
                 <button
                   className="con-btn con-btn-blue"
