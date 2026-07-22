@@ -54,13 +54,15 @@ export default function SavedPage() {
           }
         });
 
-        const withCounts: CategoryWithCounts[] = (cats || []).map((cat: Category) => {
-          const c = counts.get(cat.slug) || { total: 0, unread: 0 };
-          return {
-            ...cat,
-            ...c,
-          };
-        });
+        const withCounts: CategoryWithCounts[] = (cats || [])
+          .filter((cat: Category) => cat.slug !== "weather")
+          .map((cat: Category) => {
+            const c = counts.get(cat.slug) || { total: 0, unread: 0 };
+            return {
+              ...cat,
+              ...c,
+            };
+          });
 
         setCategories(withCounts);
         setArticles(saved);
