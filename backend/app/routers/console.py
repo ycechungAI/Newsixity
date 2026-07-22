@@ -154,5 +154,5 @@ async def resummarize_failed() -> dict:
     return {
         "success": True,
         "count": result["count"],
-        "message": f"Reset {result['count']} failed/skipped articles for resummrization",
+        "message": f"Reset {result['count']} failed/skipped/timed-out articles for resummarization. They will appear in the queue.",
     }
