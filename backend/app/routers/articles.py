@@ -117,7 +117,9 @@ async def list_articles(
     saved: bool = Query(False),
 ) -> list[Article]:
     """List articles with optional category, saved, and pagination filters."""
-    return get_articles_by_category(category, limit=limit, offset=offset, saved_only=saved)
+    return get_articles_by_category(
+        category, limit=limit, offset=offset, saved_only=saved, exclude_saved=not saved
+    )
 
 
 @router.post(

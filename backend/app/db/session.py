@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -52,3 +52,16 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def reclaim_space(db: Session) -> None:
+    """Return freed pages from recent deletes to the OS immediately.
+
+    Requires ``auto_vacuum = INCREMENTAL`` (set once via the migration that
+    converts the DB, see ``scripts/enable_incremental_vacuum.py``). Without it
+    this is a harmless no-op — SQLite just keeps freed pages for reuse instead
+    of shrinking the file, which is why the DB can grow far past its live
+    data size after repeated deletes/prunes.
+    """
+    db.execute(text("PRAGMA incremental_vacuum"))
+    db.commit()
