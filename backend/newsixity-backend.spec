@@ -2,12 +2,16 @@
 """PyInstaller spec for Newsixity backend (frozen, packaged for Tauri).
 
 Bundles the FastAPI backend + all integrations (trafilatura, yfinance, ollama,
-apscheduler) into a standalone executable for macOS. The frozen binary includes
-the built SPA (dist/) and a seed database (data/newsixity.db) as bundled data.
+apscheduler) into a standalone executable. Cross-platform: runs as-is on
+macOS, Windows, and Linux (no cross-compiling — each platform freezes its own
+binary). The frozen binary includes the built SPA (dist/) and, when present,
+a seed database (data/newsixity.db) as bundled data.
 
 Build: pyinstaller newsixity-backend.spec
-Output: dist/newsixity-backend/newsixity-backend (--onedir mode)
+Output: dist/newsixity-backend/newsixity-backend[.exe] (--onedir mode)
 """
+
+import os
 
 from PyInstaller.utils.hooks import collect_all
 
@@ -19,9 +23,17 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     # Built SPA (index.html, hashed JS/CSS, assets)
     ("../dist", "dist"),
-    # Seed database for first-run population
-    ("../data/newsixity.db", "data"),
 ]
+
+# Seed database for first-run population. It's gitignored (contains the
+# maintainer's live reading data), so it only exists on machines that have
+# actually run the app — e.g. a local packaging build, but not a fresh CI
+# checkout. _copy_seed_db_if_first_run() (backend/app/db/init_db.py) already
+# handles a missing seed gracefully (warns, starts with an empty DB), so skip
+# bundling it entirely rather than failing the build when it's absent.
+_seed_db = "../data/newsixity.db"
+if os.path.exists(_seed_db):
+    datas.append((_seed_db, "data"))
 binaries = []
 hiddenimports = [
     # APScheduler: job stores, executors, triggers (lazy-imported)
