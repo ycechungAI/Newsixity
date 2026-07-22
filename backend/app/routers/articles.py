@@ -162,16 +162,24 @@ async def mark_all_read(
     "/prune/preview",
     dependencies=[Depends(rate_limit("prune-preview", 60, TEN_MIN_MS))],
 )
-async def prune_preview() -> dict:
-    """Get a preview of articles that would be pruned."""
-    return get_prunable_articles()
+async def prune_preview(threshold: float = Query(0.0, ge=0, le=100)) -> dict:
+    """Get a preview of articles that would be pruned.
+
+    Args:
+        threshold: Engagement score threshold (0-100). Articles below this are deleted.
+    """
+    return get_prunable_articles(score_threshold=threshold)
 
 
 @router.post(
     "/prune",
     dependencies=[Depends(rate_limit("prune-execute", 60, TEN_MIN_MS))],
 )
-async def execute_prune() -> dict:
-    """Execute article pruning: delete duplicates and old articles."""
-    result = prune_articles()
+async def execute_prune(threshold: float = Query(0.0, ge=0, le=100)) -> dict:
+    """Execute article pruning with score threshold.
+
+    Args:
+        threshold: Engagement score threshold (0-100). Articles below this are deleted.
+    """
+    result = prune_articles(score_threshold=threshold)
     return {"success": True, **result}

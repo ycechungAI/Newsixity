@@ -40,8 +40,10 @@ export default function ConsolePage() {
   const [prunePreview, setPrunePreview] = useState<PrunePreview | null>(null);
   const [pruneLoading, setPruneLoading] = useState(false);
   const [showPruneConfirm, setShowPruneConfirm] = useState(false);
+  const [scoreThreshold, setScoreThreshold] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement>(null);
+  const pruneLoadingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadData();
@@ -135,10 +137,10 @@ export default function ConsolePage() {
     finally { setBacking(false); }
   }
 
-  async function loadPrunePreview() {
+  async function loadPrunePreview(threshold: number = 0) {
     setPruneLoading(true);
     try {
-      const res = await fetch("/api/prune/preview");
+      const res = await fetch(`/api/prune/preview?threshold=${threshold}`);
       if (res.ok) {
         const data = await res.json();
         setPrunePreview(data);
@@ -149,11 +151,24 @@ export default function ConsolePage() {
     finally { setPruneLoading(false); }
   }
 
+  function handleThresholdChange(value: number) {
+    setScoreThreshold(value);
+
+    // Debounce API calls while user is adjusting slider
+    if (pruneLoadingRef.current) {
+      clearTimeout(pruneLoadingRef.current);
+    }
+
+    pruneLoadingRef.current = setTimeout(() => {
+      loadPrunePreview(value);
+    }, 300);
+  }
+
   async function executePrune() {
     if (!prunePreview) return;
     setPruning(true);
     try {
-      const res = await fetch("/api/prune", { method: "POST" });
+      const res = await fetch(`/api/prune?threshold=${scoreThreshold}`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         alert(`Pruning complete!\nDeleted: ${data.deleted} articles\n\nThe page will refresh to show updated counts.`);
@@ -276,7 +291,7 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
             {!prunePreview ? (
               <div>
                 <div className="con-backup-note" style={{ marginBottom: 8 }}>
-                  Smart pruning removes duplicates and old content while preserving your saved/unread articles.
+                  Smart pruning removes duplicates, old content, and low-scoring articles while preserving your saved/unread articles.
                   <details style={{ marginTop: 6, fontSize: 11, color: "#666" }}>
                     <summary style={{ cursor: "pointer" }}>Scoring strategy (click to expand)</summary>
                     <div style={{ marginTop: 4, paddingLeft: 8 }}>
@@ -285,13 +300,27 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
                       • Promoted/relevance: +15-20 pts (high-quality articles)<br/>
                       • Recency: +5-10 pts (newer is better)<br/>
                       • Feed quality: +0-1 pts (trusted sources)<br/>
-                      When duplicates exist, keeps the highest-scoring article.
+                      Adjust the score threshold below to control pruning aggressiveness.
                     </div>
                   </details>
                 </div>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
+                    <label>Score Threshold: <strong style={{ color: "#4ade80" }}>{scoreThreshold}</strong> / 100</label>
+                    <span style={{ color: "#666", fontSize: 11 }}>Lower = delete more articles</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={scoreThreshold}
+                    onChange={(e) => handleThresholdChange(Number(e.target.value))}
+                    style={{ width: "100%", cursor: "pointer" }}
+                  />
+                </div>
                 <button
                   className="con-btn con-btn-blue"
-                  onClick={loadPrunePreview}
+                  onClick={() => loadPrunePreview(scoreThreshold)}
                   disabled={pruneLoading}
                   style={{ width: "100%" }}
                 >
@@ -318,7 +347,23 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
                   <div style={{ fontSize: 11, color: "#666", marginBottom: 8 }}>
                     <div>• Duplicates: {prunePreview.prunable_by_strategy.duplicates.toLocaleString()}</div>
                     <div>• Old articles (6+ mo): {prunePreview.prunable_by_strategy.old_articles.toLocaleString()}</div>
+                    {prunePreview.prunable_by_strategy.below_threshold > 0 && (
+                      <div>• Below score threshold ({scoreThreshold}): {prunePreview.prunable_by_strategy.below_threshold.toLocaleString()}</div>
+                    )}
                   </div>
+                </div>
+                <div style={{ fontSize: 11, color: "#666", marginBottom: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, cursor: "pointer" }}>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={scoreThreshold}
+                      onChange={(e) => handleThresholdChange(Number(e.target.value))}
+                      style={{ flex: 1, cursor: "pointer" }}
+                    />
+                    <span style={{ minWidth: 40 }}>{scoreThreshold}</span>
+                  </label>
                 </div>
                 {!showPruneConfirm ? (
                   <div style={{ display: "flex", gap: 4 }}>
