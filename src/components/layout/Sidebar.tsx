@@ -27,7 +27,7 @@ const DEFAULT_W = 156;
 export default function Sidebar({ categories }: SidebarProps) {
   const { pathname } = useLocation();
   const { toggleTheme } = useTheme();
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(DEFAULT_W);
   const [dragging, setDragging] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
