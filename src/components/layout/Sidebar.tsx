@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "@/components/ThemeProvider";
 import type { Category } from "@/types";
 
@@ -26,7 +25,7 @@ const MAX_W = 400;
 const DEFAULT_W = 156;
 
 export default function Sidebar({ categories }: SidebarProps) {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
   const { toggleTheme } = useTheme();
   const [collapsed, setCollapsed] = useState(true);
   const [width, setWidth] = useState(DEFAULT_W);
@@ -111,7 +110,7 @@ export default function Sidebar({ categories }: SidebarProps) {
     >
       <div className="sb-head">
         {!collapsed && (
-          <Link href="/" className="sb-logo" style={{ textDecoration: "none" }}>
+          <Link to="/" className="sb-logo" style={{ textDecoration: "none" }}>
             Newsixity
           </Link>
         )}
@@ -131,7 +130,7 @@ export default function Sidebar({ categories }: SidebarProps) {
       {/* nav-body: in DOM always — terminal browsers see links even when CSS hides it */}
       <div className="nav-body">
         <span className="nav-section-label">News</span>
-        <Link href="/" className={`nav-link${pathname === "/" ? " active" : ""}`}>All News</Link>
+        <Link to="/" className={`nav-link${pathname === "/" ? " active" : ""}`}>All News</Link>
 
         {categories.map((cat) => {
           const isActive =
@@ -148,14 +147,14 @@ export default function Sidebar({ categories }: SidebarProps) {
 
           return (
             <div key={cat.id}>
-              <Link href={href} className={`nav-link${isActive ? " active" : ""}`}>
+              <Link to={href} className={`nav-link${isActive ? " active" : ""}`}>
                 <span>{label}</span>
                 {cat.slug !== "finance" && unread > 0 && (
                   <span className="nav-badge">{unread > 99 ? "99+" : unread}</span>
                 )}
               </Link>
               {cat.slug === "finance" && (
-                <Link href="/finance/news" className={`nav-link sub${pathname === "/finance/news" ? " active" : ""}`}>
+                <Link to="/finance/news" className={`nav-link sub${pathname === "/finance/news" ? " active" : ""}`}>
                   <span>↳ News</span>
                   {unread > 0 && <span className="nav-badge">{unread > 99 ? "99+" : unread}</span>}
                 </Link>
@@ -165,12 +164,12 @@ export default function Sidebar({ categories }: SidebarProps) {
         })}
 
         <span className="nav-section-label" style={{ marginTop: 8 }}>Library</span>
-        <Link href="/saved" className={`nav-link${pathname === "/saved" ? " active" : ""}`}>Saved</Link>
+        <Link to="/saved" className={`nav-link${pathname === "/saved" ? " active" : ""}`}>Saved</Link>
       </div>
 
       <div className="sb-footer">
-        <Link href="/settings" className={`nav-link${pathname === "/settings" ? " active" : ""}`}>Settings</Link>
-        <Link href="/console"  className={`nav-link${pathname === "/console"  ? " active" : ""}`}>Console</Link>
+        <Link to="/settings" className={`nav-link${pathname === "/settings" ? " active" : ""}`}>Settings</Link>
+        <Link to="/console"  className={`nav-link${pathname === "/console"  ? " active" : ""}`}>Console</Link>
         <button
           className="nav-link"
           onClick={toggleTheme}
