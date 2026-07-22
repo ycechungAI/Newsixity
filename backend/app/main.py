@@ -8,6 +8,7 @@ StaticFiles for the built SPA, auth, and rate limiting arrive in later stages.
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -111,7 +112,12 @@ app.include_router(console.router, prefix="/api", tags=["console"])
 # The 'dist/' directory contains the pre-built app (index.html, hashed JS/CSS,
 # public/ assets). Vite emits a single index.html — client-side routing
 # (React Router) owns every other path.
-static_dir = Path(__file__).parent.parent.parent / "dist"
+# In frozen (PyInstaller) mode, resolve against the bundle's sys._MEIPASS.
+if getattr(sys, "frozen", False):
+    # PyInstaller unpacks to a temporary directory stored in sys._MEIPASS.
+    static_dir = Path(sys._MEIPASS) / "dist"  # type: ignore[attr-defined]
+else:
+    static_dir = Path(__file__).parent.parent.parent / "dist"
 
 
 class SPAStaticFiles(StaticFiles):

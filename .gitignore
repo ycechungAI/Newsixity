@@ -51,5 +51,9 @@ database.sqlite
 *.tsbuildinfo
 .venv/
 
+# pyinstaller (frozen backend build output)
+/backend/build/
+/backend/dist/
+
 # claude code
 .claude/
