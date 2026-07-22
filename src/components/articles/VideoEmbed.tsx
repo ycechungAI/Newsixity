@@ -24,6 +24,7 @@ export default function VideoEmbed({ url, title, playlistItems }: VideoEmbedProp
   if (!videoInfo) return null;
 
   const isAnimex = videoInfo.type === "animex";
+  const isDirect = videoInfo.type === "direct";
 
   return (
     <div>
@@ -35,6 +36,13 @@ export default function VideoEmbed({ url, title, playlistItems }: VideoEmbedProp
           >
             ▶ Watch on Animex.one
           </a>
+        ) : isDirect ? (
+          <video
+            src={currentEmbedUrl}
+            title={currentTitle}
+            controls
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          />
         ) : (
           <iframe
             src={currentEmbedUrl}
