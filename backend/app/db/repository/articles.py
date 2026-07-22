@@ -526,10 +526,10 @@ def get_summarize_category_priority() -> list[str]:
 
 
 def mark_stuck_unsummarized_timed_out() -> int:
-    """Mark articles stuck unsummarized for 2+ hours as timed out.
+    """Mark articles stuck unsummarized for 8+ hours as timed out.
 
-    Port of the pre-batch cleanup UPDATE in ollama/background.ts: any article
-    still lacking a summary whose fetched_at is older than 2 hours gets a
+    Increased from 2 hours to allow local Ollama (fast but with high volume) to catch up.
+    Articles still lacking a summary whose fetched_at is older than 8 hours get a
     "[Skipped: summarization timed out]" placeholder + 'skipped' model so it
     drops out of the queue. Returns the number of rows affected.
     """
@@ -538,7 +538,7 @@ def mark_stuck_unsummarized_timed_out() -> int:
             update(ArticleModel)
             .where(
                 or_(ArticleModel.summary.is_(None), ArticleModel.summary == ""),
-                ArticleModel.fetched_at < func.datetime("now", "-2 hours"),
+                ArticleModel.fetched_at < func.datetime("now", "-8 hours"),
             )
             .values(
                 summary="[Skipped: summarization timed out]",
