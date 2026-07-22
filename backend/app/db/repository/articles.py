@@ -577,6 +577,7 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
     - Unread status (30 points)
     - Relevance/promotion (20 points)
     - Recency bonus (10 points)
+    - No summary penalty (-20 points)
     """
     from datetime import datetime, timedelta
 
@@ -609,10 +610,14 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
         except:
             pass
 
+    # Articles without summary are less useful
+    if not article.summary or article.summary == "":
+        score -= 20
+
     # Feed quality (source_weight) provides small boost
     score += feed_weight - 1.0  # 0-based adjustment (1.0 = neutral)
 
-    return min(100, score)  # Cap at 100
+    return max(0, min(100, score))  # Clamp to 0-100
 
 
 def get_articles_with_scores() -> list[dict]:
@@ -634,6 +639,7 @@ def get_articles_with_scores() -> list[dict]:
                 ArticleModel.is_read,
                 ArticleModel.is_promoted,
                 ArticleModel.relevance_score,
+                ArticleModel.summary,
                 FeedModel.name.label("feed_name"),
                 FeedModel.source_weight.label("feed_weight"),
             )
@@ -655,6 +661,7 @@ def get_articles_with_scores() -> list[dict]:
                     'is_promoted': row.is_promoted,
                     'relevance_score': row.relevance_score,
                     'published_at': row.published_at,
+                    'summary': row.summary,
                 })(),
                 feed_weight=row.feed_weight or 1.0
             )

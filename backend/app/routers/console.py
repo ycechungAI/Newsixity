@@ -37,7 +37,7 @@ MAX_BACKUPS = 2
     dependencies=[Depends(rate_limit("console-get", 120, TEN_MIN_MS))],
 )
 async def get_console_state() -> dict:
-    queue = get_summarization_queue(20)
+    queue = get_summarization_queue(50)  # Show up to 50 items for better real-time visibility
     queue_count = get_summarization_queue_count()
     logs = get_logs()
 

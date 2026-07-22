@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.config import settings
 from app.db.repository import get_article_by_id, get_unsummarized_articles, update_article_summary
 from app.lib.services.summarization import (
     SessionLimitExceededError,
@@ -51,7 +52,12 @@ async def summarize_endpoint(body: SummarizeRequestBody) -> dict:
         return {"message": "Single article successfully summarized.", "summary": summary}
 
     # No articleId provided: batch/resummarization trigger.
-    articles = get_unsummarized_articles(50)
+    batch_size = settings.get_resummarize_batch_size()
+    if batch_size <= 0:
+        # Unlimited batch: fetch a very large number (999999) to effectively get all
+        articles = get_unsummarized_articles(999999)
+    else:
+        articles = get_unsummarized_articles(batch_size)
 
     if not articles:
         return {"message": "No unsummarized articles found for the queue."}
