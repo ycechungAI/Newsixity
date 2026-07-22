@@ -44,6 +44,7 @@ def delete_article_by_id(article_id: int) -> None:
 
 
 def get_summarization_queue(limit: int = 20) -> list[SummarizationQueueItem]:
+    """Articles awaiting summarization. Excludes Manual Links (never summarized)."""
     with SessionLocal() as db:
         rows = db.execute(
             select(
@@ -57,7 +58,10 @@ def get_summarization_queue(limit: int = 20) -> list[SummarizationQueueItem]:
             .select_from(ArticleModel)
             .outerjoin(FeedModel, ArticleModel.feed_id == FeedModel.id)
             .outerjoin(CategoryModel, FeedModel.category_id == CategoryModel.id)
-            .where(or_(ArticleModel.summary.is_(None), ArticleModel.summary == ""))
+            .where(
+                or_(ArticleModel.summary.is_(None), ArticleModel.summary == ""),
+                or_(FeedModel.name.is_(None), FeedModel.name != "Manual Links"),
+            )
             .order_by(ArticleModel.fetched_at.desc())
             .limit(limit)
         ).all()
@@ -77,8 +81,12 @@ def get_summarization_queue(limit: int = 20) -> list[SummarizationQueueItem]:
 
 def _queue_count(db: Session) -> int:
     return db.execute(
-        select(func.count(ArticleModel.id)).where(
-            or_(ArticleModel.summary.is_(None), ArticleModel.summary == "")
+        select(func.count(ArticleModel.id))
+        .select_from(ArticleModel)
+        .outerjoin(FeedModel, ArticleModel.feed_id == FeedModel.id)
+        .where(
+            or_(ArticleModel.summary.is_(None), ArticleModel.summary == ""),
+            or_(FeedModel.name.is_(None), FeedModel.name != "Manual Links"),
         )
     ).scalar() or 0
 

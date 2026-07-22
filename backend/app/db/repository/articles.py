@@ -384,7 +384,7 @@ def get_unsummarized_articles(
     limit: int,
     category_slug: str | None = None,
 ) -> list[Article]:
-    """Get unsummarized articles, optionally by category."""
+    """Get unsummarized articles, optionally by category. Excludes Manual Links feed."""
     with SessionLocal() as db:
         query = (
             select(
@@ -394,7 +394,12 @@ def get_unsummarized_articles(
             )
             .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
             .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
-            .where(ArticleModel.summary.is_(None))
+            .where(
+                and_(
+                    ArticleModel.summary.is_(None),
+                    FeedModel.name != "Manual Links",
+                )
+            )
         )
 
         if category_slug:
@@ -415,7 +420,7 @@ def get_unsummarized_articles(
 
 
 def get_unsummarized_saved_articles(limit: int = 30) -> list[Article]:
-    """Get unsummarized saved articles (highest priority for summarization)."""
+    """Get unsummarized saved articles (highest priority for summarization). Excludes Manual Links feed."""
     with SessionLocal() as db:
         rows = db.execute(
             select(
@@ -431,6 +436,7 @@ def get_unsummarized_saved_articles(limit: int = 30) -> list[Article]:
                     ArticleModel.is_saved == 1,
                     ArticleModel.link.isnot(None),
                     ArticleModel.link != "",
+                    FeedModel.name != "Manual Links",
                 )
             )
             .order_by(ArticleModel.published_at.desc())
@@ -451,7 +457,7 @@ def get_unsummarized_by_category(
     category_slug: str,
     limit: int = 30,
 ) -> list[Article]:
-    """Get unsummarized articles for a specific category."""
+    """Get unsummarized articles for a specific category. Excludes Manual Links feed."""
     with SessionLocal() as db:
         rows = db.execute(
             select(
@@ -468,6 +474,7 @@ def get_unsummarized_by_category(
                     CategoryModel.slug == category_slug,
                     ArticleModel.link.isnot(None),
                     ArticleModel.link != "",
+                    FeedModel.name != "Manual Links",
                 )
             )
             .order_by(ArticleModel.published_at.desc())
