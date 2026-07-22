@@ -13,6 +13,8 @@ from app.db.repository import (
     get_articles_by_category,
     mark_all_read_by_category,
     upsert_article,
+    get_prunable_articles,
+    prune_articles,
 )
 from app.schemas import Article, ManualArticleRequestBody, ArticlesMarkAllReadRequestBody
 
@@ -154,3 +156,22 @@ async def mark_all_read(
     marked = mark_all_read_by_category(category_slug)
 
     return {"success": True, "marked": marked}
+
+
+@router.get(
+    "/prune/preview",
+    dependencies=[Depends(rate_limit("prune-preview", 60, TEN_MIN_MS))],
+)
+async def prune_preview() -> dict:
+    """Get a preview of articles that would be pruned."""
+    return get_prunable_articles()
+
+
+@router.post(
+    "/prune",
+    dependencies=[Depends(rate_limit("prune-execute", 60, TEN_MIN_MS))],
+)
+async def execute_prune() -> dict:
+    """Execute article pruning: delete duplicates and old articles."""
+    result = prune_articles()
+    return {"success": True, **result}

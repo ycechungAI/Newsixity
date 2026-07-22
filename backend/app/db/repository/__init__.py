@@ -30,6 +30,8 @@ from app.db.repository.articles import (
     get_summarize_category_priority,
     mark_stuck_unsummarized_timed_out,
     reset_failed_and_skipped_articles,
+    get_prunable_articles,
+    prune_articles,
 )
 from app.db.repository.feeds import (
     get_all_feeds,
@@ -154,6 +156,8 @@ __all__ = [
     "get_summarize_category_priority",
     "mark_stuck_unsummarized_timed_out",
     "reset_failed_and_skipped_articles",
+    "get_prunable_articles",
+    "prune_articles",
     # feeds
     "get_all_feeds",
     "get_feed_category_slug",

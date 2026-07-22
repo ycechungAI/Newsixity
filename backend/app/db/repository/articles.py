@@ -8,7 +8,7 @@ FLAGGED FOR SONNET REVIEW:
 
 from hashlib import sha256
 
-from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -565,3 +565,187 @@ def reset_failed_and_skipped_articles() -> dict:
         )
         db.commit()
         return {"count": result.rowcount}
+
+
+def get_prunable_articles() -> dict:
+    """Analyze articles for pruning and return a preview of what would be deleted.
+
+    Strategies:
+    1. Similarity-based: Group by title_hash, keep best article per group
+    2. Preserve user priorities: Never delete saved or unread articles
+    3. Time-based: Delete articles >6 months old, but keep current year (2026)
+    4. Skip articles without summaries
+
+    Returns dict with:
+    - total_articles: Total count
+    - saved_count: Saved articles (preserved)
+    - unread_count: Unread articles (preserved)
+    - prunable_by_strategy: breakdown of articles to delete
+    - preview_ids: Up to 100 article IDs that would be deleted
+    """
+    from datetime import datetime, timedelta
+
+    with SessionLocal() as db:
+        now = datetime.now()
+        six_months_ago = now - timedelta(days=180)
+        current_year_start = datetime(2026, 1, 1)
+
+        # Total articles count
+        total = db.execute(select(func.count(ArticleModel.id))).scalar() or 0
+
+        # Saved articles (protected)
+        saved = db.execute(
+            select(func.count(ArticleModel.id)).where(ArticleModel.is_saved == 1)
+        ).scalar() or 0
+
+        # Unread articles (protected)
+        unread = db.execute(
+            select(func.count(ArticleModel.id)).where(ArticleModel.is_read == 0)
+        ).scalar() or 0
+
+        # Find similar articles by title_hash (exact duplicates)
+        similar_candidates = db.execute(
+            select(ArticleModel.title_hash, func.count(ArticleModel.id).label("count"))
+            .where(
+                and_(
+                    ArticleModel.title_hash.isnot(None),
+                    ArticleModel.title_hash != "",
+                    ArticleModel.is_saved == 0,  # Skip saved
+                    ArticleModel.is_read == 1,    # Only read articles
+                )
+            )
+            .group_by(ArticleModel.title_hash)
+            .having(func.count(ArticleModel.id) > 1)
+        ).all()
+
+        duplicates_to_delete = 0
+        similar_ids = []
+
+        for title_hash, count in similar_candidates:
+            # Get all articles with this hash, sorted by published_at desc (newest first)
+            articles = db.execute(
+                select(ArticleModel.id)
+                .where(ArticleModel.title_hash == title_hash)
+                .order_by(ArticleModel.published_at.desc())
+            ).scalars().all()
+
+            # Keep the first (newest), delete the rest
+            if articles:
+                to_delete = articles[1:]  # Skip the first/best one
+                duplicates_to_delete += len(to_delete)
+                similar_ids.extend(to_delete[:50])  # Preview limit
+
+        # Find old articles without summaries or with old timestamp
+        old_articles = db.execute(
+            select(ArticleModel.id)
+            .where(
+                and_(
+                    ArticleModel.is_saved == 0,    # Not saved
+                    ArticleModel.is_read == 1,      # Already read
+                    ArticleModel.summary.isnot(None),  # Has summary
+                    ArticleModel.summary != "",
+                    ArticleModel.published_at < six_months_ago.isoformat(),  # Older than 6 months
+                    ArticleModel.published_at < current_year_start.isoformat(),  # Before 2026
+                )
+            )
+            .limit(100)
+        ).scalars().all()
+
+        old_count = db.execute(
+            select(func.count(ArticleModel.id)).where(
+                and_(
+                    ArticleModel.is_saved == 0,
+                    ArticleModel.is_read == 1,
+                    ArticleModel.summary.isnot(None),
+                    ArticleModel.summary != "",
+                    ArticleModel.published_at < six_months_ago.isoformat(),
+                    ArticleModel.published_at < current_year_start.isoformat(),
+                )
+            )
+        ).scalar() or 0
+
+        # Combine preview IDs (deduplicate)
+        preview_ids = list(set(similar_ids + list(old_articles)))[:100]
+
+        return {
+            "total_articles": total,
+            "saved_count": saved,
+            "unread_count": unread,
+            "prunable_by_strategy": {
+                "duplicates": duplicates_to_delete,
+                "old_articles": old_count,
+                "total": duplicates_to_delete + old_count,
+            },
+            "preview_ids": preview_ids,
+        }
+
+
+def prune_articles() -> dict:
+    """Execute article pruning: delete duplicates and old articles.
+
+    Uses same logic as get_prunable_articles(). Returns count of deleted articles.
+    """
+    from datetime import datetime, timedelta
+
+    with SessionLocal() as db:
+        now = datetime.now()
+        six_months_ago = now - timedelta(days=180)
+        current_year_start = datetime(2026, 1, 1)
+
+        deleted_count = 0
+
+        # Delete duplicate articles (keeping the newest per title_hash)
+        duplicates = db.execute(
+            select(ArticleModel.title_hash, func.count(ArticleModel.id).label("count"))
+            .where(
+                and_(
+                    ArticleModel.title_hash.isnot(None),
+                    ArticleModel.title_hash != "",
+                    ArticleModel.is_saved == 0,
+                    ArticleModel.is_read == 1,
+                )
+            )
+            .group_by(ArticleModel.title_hash)
+            .having(func.count(ArticleModel.id) > 1)
+        ).all()
+
+        for title_hash, _ in duplicates:
+            articles = db.execute(
+                select(ArticleModel.id)
+                .where(ArticleModel.title_hash == title_hash)
+                .order_by(ArticleModel.published_at.desc())
+            ).scalars().all()
+
+            if articles:
+                to_delete = articles[1:]
+                db.execute(
+                    delete(ArticleModel).where(ArticleModel.id.in_(to_delete))
+                )
+                deleted_count += len(to_delete)
+
+        # Delete old articles (count first)
+        old_count_result = db.execute(
+            delete(ArticleModel).where(
+                and_(
+                    ArticleModel.is_saved == 0,
+                    ArticleModel.is_read == 1,
+                    ArticleModel.summary.isnot(None),
+                    ArticleModel.summary != "",
+                    ArticleModel.published_at < six_months_ago.isoformat(),
+                    ArticleModel.published_at < current_year_start.isoformat(),
+                )
+            )
+        )
+
+        old_count = old_count_result.rowcount or 0
+        deleted_count += old_count
+
+        db.commit()
+
+        return {
+            "deleted": deleted_count,
+            "duplicates_deleted": db.execute(
+                select(func.count(ArticleModel.id))
+                .where(ArticleModel.title_hash.isnot(None))
+            ).scalar() or 0,
+        }
