@@ -34,7 +34,7 @@ MAX_BACKUPS = 2
 
 @router.get(
     "/console",
-    dependencies=[Depends(rate_limit("console-get", 120, TEN_MIN_MS))],
+    dependencies=[Depends(rate_limit("console-get", 1000, TEN_MIN_MS))],  # High limit for 500ms refresh rate
 )
 async def get_console_state() -> dict:
     queue = get_summarization_queue(50)  # Show up to 50 items for better real-time visibility
