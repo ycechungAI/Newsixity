@@ -3,10 +3,14 @@ set -e
 
 # Build script for Newsixity backend sidecar (PyInstaller frozen executable).
 # Builds the frontend, freezes the backend with PyInstaller, and copies the
-# binary into src-tauri/binaries/ where Tauri expects it.
+# resulting --onedir output into src-tauri/resources/ where Tauri bundles it
+# as a resource (not externalBin/sidecar() — PyInstaller's --onedir output is
+# a directory of files the executable depends on, not a single self-contained
+# binary, so it can't use Tauri's single-file sidecar convention; see the
+# comment atop src-tauri/src/lib.rs for how it's spawned at runtime instead).
 #
 # Usage: ./backend/build_sidecar.sh
-#        Produces: src-tauri/binaries/newsixity-backend-aarch64-apple-darwin (macOS arm64)
+#        Produces: src-tauri/resources/newsixity-backend/ (full onedir tree)
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -23,39 +27,18 @@ echo ""
 # Step 2: Freeze the backend with PyInstaller.
 echo "🧊 Freezing backend with PyInstaller..."
 cd backend
-.venv/bin/pyinstaller newsixity-backend.spec
+../.venv/bin/pyinstaller newsixity-backend.spec
 echo "✓ Backend frozen to dist/newsixity-backend/"
 cd ..
 echo ""
 
-# Step 3: Copy the binary into src-tauri/binaries/.
-echo "📍 Installing sidecar binary for Tauri..."
-mkdir -p src-tauri/binaries
-
-# Determine target triple based on current platform.
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    if [[ $(uname -m) == "arm64" ]]; then
-        TARGET="aarch64-apple-darwin"
-    else
-        TARGET="x86_64-apple-darwin"
-    fi
-elif [[ "$OSTYPE" == "linux-gnu" ]]; then
-    if [[ $(uname -m) == "x86_64" ]]; then
-        TARGET="x86_64-unknown-linux-gnu"
-    else
-        TARGET="aarch64-unknown-linux-gnu"
-    fi
-elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-    TARGET="x86_64-pc-windows-gnu"
-else
-    echo "❌ Unsupported OS: $OSTYPE"
-    exit 1
-fi
-
-SIDECAR_NAME="newsixity-backend-${TARGET}"
-cp backend/dist/newsixity-backend/newsixity-backend "src-tauri/binaries/${SIDECAR_NAME}"
-chmod +x "src-tauri/binaries/${SIDECAR_NAME}"
-echo "✓ Sidecar installed: src-tauri/binaries/${SIDECAR_NAME}"
+# Step 3: Copy the full onedir tree into src-tauri/resources/.
+echo "📍 Installing backend resource for Tauri..."
+rm -rf src-tauri/resources/newsixity-backend
+mkdir -p src-tauri/resources
+cp -R backend/dist/newsixity-backend src-tauri/resources/newsixity-backend
+chmod +x src-tauri/resources/newsixity-backend/newsixity-backend
+echo "✓ Resource installed: src-tauri/resources/newsixity-backend/"
 echo ""
 
-echo "✅ Build complete. Run 'npm run tauri:build' to build the app."
+echo "✅ Build complete. Run 'npx tauri build' to build the app."

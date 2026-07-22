@@ -55,5 +55,10 @@ database.sqlite
 /backend/build/
 /backend/dist/
 
+# tauri (rust build output + generated schemas + copied-in backend resource)
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/resources/newsixity-backend/
+
 # claude code
 .claude/

@@ -5,7 +5,15 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 
 const eslintConfig = defineConfig([
-  globalIgnores(["node_modules/**", "dist/**", "build/**", "out/**", ".next/**", ".venv/**"]),
+  globalIgnores([
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/.next/**",
+    "**/.venv/**",
+    "**/src-tauri/**",
+  ]),
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

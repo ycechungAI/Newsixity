@@ -9,64 +9,75 @@ Build: pyinstaller newsixity-backend.spec
 Output: dist/newsixity-backend/newsixity-backend (--onedir mode)
 """
 
+from PyInstaller.utils.hooks import collect_all
+
+# `collect_all=[...]` and `excludedimports=[...]` are NOT real Analysis()
+# kwargs (that was a bug in an earlier version of this spec — they got
+# silently absorbed with no effect, meaning trafilatura/yfinance were never
+# actually collected). The real API is the collect_all() helper function
+# below, whose (datas, binaries, hiddenimports) results get merged in.
+datas = [
+    # Built SPA (index.html, hashed JS/CSS, assets)
+    ("../dist", "dist"),
+    # Seed database for first-run population
+    ("../data/newsixity.db", "data"),
+]
+binaries = []
+hiddenimports = [
+    # APScheduler: job stores, executors, triggers (lazy-imported)
+    "apscheduler.jobstores.memory",
+    "apscheduler.executors.asyncio",
+    "apscheduler.triggers.interval",
+    "apscheduler.triggers.cron",
+    # Uvicorn: event loop, protocol, and lifespan selection (lazy CLI parsing)
+    "uvicorn.loops.auto",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan.on",
+]
+
+for pkg in ("trafilatura", "courlan", "justext", "yfinance"):
+    pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
+    datas += pkg_datas
+    binaries += pkg_binaries
+    hiddenimports += pkg_hiddenimports
+
 a = Analysis(
     ["run_server.py"],
     pathex=[],
-    binaries=[],
-    datas=[
-        # Built SPA (index.html, hashed JS/CSS, assets)
-        ("../dist", "dist"),
-        # Seed database for first-run population
-        ("../data/newsixity.db", "data"),
-    ],
-    hiddenimports=[
-        # APScheduler: job stores, executors, triggers (lazy-imported)
-        "apscheduler.jobstores.memory",
-        "apscheduler.executors.asyncio",
-        "apscheduler.triggers.interval",
-        "apscheduler.triggers.cron",
-        # Uvicorn: event loop, protocol, and lifespan selection (lazy CLI parsing)
-        "uvicorn.loops.auto",
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.websockets.auto",
-        "uvicorn.lifespan.on",
-    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludedimports=[
+    excludes=[
         # Exclude dev/test dependencies that would bloat the bundle
         "pytest",
         "ruff",
         "watchfiles",
     ],
     noarchive=False,
-    collect_all=[
-        # Trafilatura (web scraping): content extractors, parsers, data files
-        "trafilatura",
-        "courlan",
-        "justext",
-        # yfinance (stock quotes): Yahoo API integrations, data processing
-        "yfinance",
-    ],
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
+# exclude_binaries=True is what makes this an --onedir build: EXE writes just
+# the bootloader here, and COLLECT (below) assembles it plus everything else
+# into dist/newsixity-backend/. Without this flag, EXE bundles everything
+# into a single onefile executable at that same dist/newsixity-backend path
+# — which then collides with COLLECT trying to create a directory there
+# instead, which was the root cause of this spec's earlier build failure.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="newsixity-backend",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     target_arch=None,
