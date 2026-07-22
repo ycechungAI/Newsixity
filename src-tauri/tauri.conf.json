@@ -22,6 +22,8 @@
       "icons/icon.icns"
     ],
     "resources": ["resources/newsixity-backend"],
+    "category": "News",
+    "copyright": "© 2026 Newsixity",
     "macOS": {
       "minimumSystemVersion": "11.0"
     }
