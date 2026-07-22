@@ -16,6 +16,18 @@ interface LogEntry {
   message: string;
 }
 
+interface PrunePreview {
+  total_articles: number;
+  saved_count: number;
+  unread_count: number;
+  prunable_by_strategy: {
+    duplicates: number;
+    old_articles: number;
+    total: number;
+  };
+  preview_ids: number[];
+}
+
 export default function ConsolePage() {
   const [queue, setQueue]           = useState<QueueItem[]>([]);
   const [queueCount, setQueueCount] = useState(0);
@@ -24,6 +36,10 @@ export default function ConsolePage() {
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
+  const [pruning, setPruning]       = useState(false);
+  const [prunePreview, setPrunePreview] = useState<PrunePreview | null>(null);
+  const [pruneLoading, setPruneLoading] = useState(false);
+  const [showPruneConfirm, setShowPruneConfirm] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +133,39 @@ export default function ConsolePage() {
       else alert(`Backup failed: ${data.error}`);
     } catch { alert("Failed to backup database."); }
     finally { setBacking(false); }
+  }
+
+  async function loadPrunePreview() {
+    setPruneLoading(true);
+    try {
+      const res = await fetch("/api/prune/preview");
+      if (res.ok) {
+        const data = await res.json();
+        setPrunePreview(data);
+      } else {
+        alert("Failed to load pruning preview.");
+      }
+    } catch { alert("Failed to load pruning preview."); }
+    finally { setPruneLoading(false); }
+  }
+
+  async function executePrune() {
+    if (!prunePreview) return;
+    setPruning(true);
+    try {
+      const res = await fetch("/api/prune", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Pruning complete!\nDeleted: ${data.deleted} articles\n\nThe page will refresh to show updated counts.`);
+        setShowPruneConfirm(false);
+        setPrunePreview(null);
+        // Reload page to refresh article counts
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        alert("Failed to execute pruning.");
+      }
+    } catch { alert("Failed to execute pruning."); }
+    finally { setPruning(false); }
   }
 
   return (
@@ -215,6 +264,95 @@ cp data/newsixity.db data/newsixity.db.old
 cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
 # Restart the app`}</pre>
             </details>
+          </div>
+        </div>
+
+        {/* Article Pruning */}
+        <div className="con-section" style={{ borderColor: "#2a3a4a" }}>
+          <div className="con-section-head" style={{ borderColor: "#2a3a4a", background: "#0a0f15" }}>
+            <div className="con-section-title" style={{ color: "#f97316" }}>Article Pruning</div>
+          </div>
+          <div className="con-section-body">
+            {!prunePreview ? (
+              <div>
+                <div className="con-backup-note" style={{ marginBottom: 8 }}>
+                  Smart pruning removes duplicate articles, old content (6+ months), and preserves saved/unread articles.
+                </div>
+                <button
+                  className="con-btn con-btn-blue"
+                  onClick={loadPrunePreview}
+                  disabled={pruneLoading}
+                  style={{ width: "100%" }}
+                >
+                  {pruneLoading ? "Loading…" : "Preview Pruning"}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 12, color: "#999", marginBottom: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <strong>Total Articles:</strong> {prunePreview.total_articles.toLocaleString()}
+                    </div>
+                    <div>
+                      <strong>Saved (Protected):</strong> {prunePreview.saved_count.toLocaleString()}
+                    </div>
+                    <div>
+                      <strong>Unread (Protected):</strong> {prunePreview.unread_count.toLocaleString()}
+                    </div>
+                    <div>
+                      <strong style={{ color: "#ef4444" }}>To Delete:</strong> {prunePreview.prunable_by_strategy.total.toLocaleString()}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#666", marginBottom: 8 }}>
+                    <div>• Duplicates: {prunePreview.prunable_by_strategy.duplicates.toLocaleString()}</div>
+                    <div>• Old articles (6+ mo): {prunePreview.prunable_by_strategy.old_articles.toLocaleString()}</div>
+                  </div>
+                </div>
+                {!showPruneConfirm ? (
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button
+                      className="con-btn con-btn-green"
+                      onClick={() => setShowPruneConfirm(true)}
+                      style={{ flex: 1 }}
+                    >
+                      Confirm Prune
+                    </button>
+                    <button
+                      className="con-btn"
+                      onClick={() => setPrunePreview(null)}
+                      style={{ flex: 1, color: "#999", borderColor: "#333" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#ef4444", marginBottom: 8, lineHeight: 1.4 }}>
+                      ⚠️ This will permanently delete {prunePreview.prunable_by_strategy.total.toLocaleString()} articles.
+                      Saved and unread articles will be preserved.
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="con-btn con-btn-red"
+                        onClick={executePrune}
+                        disabled={pruning}
+                        style={{ flex: 1 }}
+                      >
+                        {pruning ? "Pruning…" : "Execute Prune"}
+                      </button>
+                      <button
+                        className="con-btn"
+                        onClick={() => setShowPruneConfirm(false)}
+                        style={{ flex: 1, color: "#999", borderColor: "#333" }}
+                      >
+                        Back
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
