@@ -1,5 +1,5 @@
 export interface VideoInfo {
-  type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'animex' | 'unknown';
+  type: 'youtube' | 'vimeo' | 'dailymotion' | 'odysee' | 'animex' | 'direct' | 'unknown';
   videoId: string;
   embedUrl: string;
   playlistId?: string;
@@ -142,6 +142,17 @@ export function extractVideoInfo(url: string): VideoInfo | null {
           };
         }
       }
+    }
+
+    // Direct video files (mp4, mkv, webm, etc.)
+    const directVideoExts = ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m3u8'];
+    const pathname = urlObj.pathname.toLowerCase();
+    if (directVideoExts.some(ext => pathname.endsWith(ext))) {
+      return {
+        type: 'direct',
+        videoId: url,
+        embedUrl: url,
+      };
     }
 
     return null;
