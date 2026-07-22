@@ -291,16 +291,22 @@ cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
             {!prunePreview ? (
               <div>
                 <div className="con-backup-note" style={{ marginBottom: 8 }}>
-                  Smart pruning removes duplicates, old content, and low-scoring articles while preserving your saved/unread articles.
+                  Smart pruning removes duplicates, old content, and low-scoring articles.
+                  <strong style={{ color: "#4ade80" }}> Saved articles are NEVER deleted.</strong>
                   <details style={{ marginTop: 6, fontSize: 11, color: "#666" }}>
-                    <summary style={{ cursor: "pointer" }}>Scoring strategy (click to expand)</summary>
+                    <summary style={{ cursor: "pointer" }}>Scoring strategy & safety (click to expand)</summary>
                     <div style={{ marginTop: 4, paddingLeft: 8 }}>
-                      • Saved status: +40 pts (almost never delete)<br/>
-                      • Unread status: +30 pts (user hasn't read yet)<br/>
-                      • Promoted/relevance: +15-20 pts (high-quality articles)<br/>
-                      • Recency: +5-10 pts (newer is better)<br/>
+                      <strong style={{ color: "#999" }}>Safety:</strong><br/>
+                      ✓ Saved articles (favorites): Always preserved<br/>
+                      ✓ Unread articles: Always preserved<br/>
+                      <br/>
+                      <strong style={{ color: "#999" }}>Scoring:</strong><br/>
+                      • Saved status: +40 pts (bookmarks scored highest)<br/>
+                      • Unread status: +30 pts (user hasn't processed yet)<br/>
+                      • Promoted/relevance: +15-20 pts (high-quality detected)<br/>
+                      • Recency: +5-10 pts (newer articles preferred)<br/>
                       • Feed quality: +0-1 pts (trusted sources)<br/>
-                      Adjust the score threshold below to control pruning aggressiveness.
+                      <br/>Adjust threshold below to control aggressiveness.
                     </div>
                   </details>
                 </div>

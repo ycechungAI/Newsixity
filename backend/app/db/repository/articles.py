@@ -617,6 +617,9 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
 def get_articles_with_scores() -> list[dict]:
     """Get all non-saved, read articles with their engagement scores.
 
+    IMPORTANT: Only includes articles where is_saved == 0. Saved articles (favorites)
+    are NEVER considered for any pruning strategy, regardless of score.
+
     Returns list of {id, title, score, published_at, feed_name} for scoring analysis.
     Used for threshold-based pruning preview.
     """
@@ -827,6 +830,12 @@ def get_prunable_articles(score_threshold: float = 0.0) -> dict:
 
 def prune_articles(score_threshold: float = 0.0) -> dict:
     """Execute article pruning: delete duplicates, old articles, and low-score articles.
+
+    SAFETY GUARANTEE: Saved articles (favorites) are NEVER deleted under any strategy.
+    This protection applies to all pruning strategies:
+    - Duplicate removal: Saved articles are skipped entirely
+    - Old article removal: Saved articles are skipped entirely
+    - Score threshold: Only considers non-saved articles (is_saved == 0)
 
     Uses engagement scoring to keep the best article per duplicate cluster.
     Deletes any read/non-saved article with score < score_threshold.
