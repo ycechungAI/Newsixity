@@ -583,6 +583,7 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
     from datetime import datetime, timedelta
 
     # Dead/unavailable links have no value—always prune them
+    # (Video content is marked but kept with normal scoring since user may favorite videos)
     if article.summary and article.summary.startswith("[Link unavailable:"):
         return 0.0
 
