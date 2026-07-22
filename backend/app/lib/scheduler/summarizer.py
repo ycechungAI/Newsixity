@@ -50,6 +50,23 @@ COLORS = {
 _background_running = False
 
 
+async def _check_link_status(url: str) -> str:
+    """Check if a link is accessible. Returns status like '200', 'Error 404', 'Error: timeout', etc."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.head(url, follow_redirects=True)
+            if response.status_code == 200:
+                return "200"
+            elif response.status_code == 404:
+                return "Error 404"
+            else:
+                return f"Error {response.status_code}"
+    except Exception as e:
+        error_type = type(e).__name__
+        return f"Error: {error_type}"
+
+
 async def summarize_one(article: Article) -> bool:
     """Summarize a single article, returning True on success.
 
@@ -72,6 +89,18 @@ async def summarize_one(article: Article) -> bool:
 
     # Still no content after trying — mark skipped to remove from the queue.
     if not content or len(content) <= 10:
+        # Check if link is dead (404 or unreachable)
+        if article.link:
+            link_status = await _check_link_status(article.link)
+            if link_status.startswith("Error"):
+                update_article_summary(article.id, f"[Link unavailable: {link_status}]", "skipped")
+                logger.info(
+                    f'{COLORS["warning"]}[Newsixity] Skipped article %s (dead link): "%s..."{COLORS["reset"]}',
+                    article.id,
+                    article.title[:50],
+                )
+                return False
+
         update_article_summary(article.id, "[No content to summarize]", "skipped")
         logger.info(
             f'{COLORS["warning"]}[Newsixity] Skipped article %s (no content): "%s..."{COLORS["reset"]}',
