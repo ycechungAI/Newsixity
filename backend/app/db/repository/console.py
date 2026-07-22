@@ -98,13 +98,12 @@ def cull_unsummarized_queue_to_limit(limit: int) -> int:
 
     with SessionLocal() as db:
         # 1) Cull "cannot summarized" placeholders (unfavourited, 6+ months).
+        # NOTE: Only delete "[No content to summarize]" articles; keep "[Summarization failed:...]"
+        # for users to review or manually retry. Failed articles should not be auto-deleted.
         cannot_ids = db.execute(
             select(ArticleModel.id)
             .where(
-                or_(
-                    ArticleModel.summary.like("[No content to summarize]%"),
-                    ArticleModel.summary.like("[Summarization failed:%"),
-                ),
+                ArticleModel.summary.like("[No content to summarize]%"),
                 ArticleModel.is_saved == 0,
                 func.coalesce(ArticleModel.published_at, ArticleModel.fetched_at)
                 < func.datetime("now", f"-{CULL_UNSUMMARIZED_AGE_MONTHS} months"),
