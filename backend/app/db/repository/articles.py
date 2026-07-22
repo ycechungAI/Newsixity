@@ -614,7 +614,58 @@ def _calculate_engagement_score(article: ArticleModel, feed_weight: float = 1.0)
     return min(100, score)  # Cap at 100
 
 
-def get_prunable_articles() -> dict:
+def get_articles_with_scores() -> list[dict]:
+    """Get all non-saved, read articles with their engagement scores.
+
+    Returns list of {id, title, score, published_at, feed_name} for scoring analysis.
+    Used for threshold-based pruning preview.
+    """
+    with SessionLocal() as db:
+        articles_with_feed = db.execute(
+            select(
+                ArticleModel.id,
+                ArticleModel.title,
+                ArticleModel.published_at,
+                ArticleModel.is_saved,
+                ArticleModel.is_read,
+                ArticleModel.is_promoted,
+                ArticleModel.relevance_score,
+                FeedModel.name.label("feed_name"),
+                FeedModel.source_weight.label("feed_weight"),
+            )
+            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+            .where(
+                and_(
+                    ArticleModel.is_saved == 0,  # Only read, not saved
+                    ArticleModel.is_read == 1,
+                )
+            )
+        ).all()
+
+        result = []
+        for row in articles_with_feed:
+            score = _calculate_engagement_score(
+                type('Article', (), {
+                    'is_saved': row.is_saved,
+                    'is_read': row.is_read,
+                    'is_promoted': row.is_promoted,
+                    'relevance_score': row.relevance_score,
+                    'published_at': row.published_at,
+                })(),
+                feed_weight=row.feed_weight or 1.0
+            )
+            result.append({
+                "id": row.id,
+                "title": row.title,
+                "score": score,
+                "published_at": row.published_at,
+                "feed_name": row.feed_name,
+            })
+
+        return result
+
+
+def get_prunable_articles(score_threshold: float = 0.0) -> dict:
     """Analyze articles for pruning and return a preview of what would be deleted.
 
     Strategies:
@@ -623,13 +674,19 @@ def get_prunable_articles() -> dict:
     3. Time-based: Delete articles >6 months old, but keep current year (2026)
     4. Skip articles without summaries
     5. Engagement scoring: Within duplicates, keep the most engaging article
+    6. Score threshold: Delete any article with score < score_threshold (0-100)
+
+    Args:
+        score_threshold: Minimum engagement score to keep (0-100). Articles below this are deleted.
 
     Returns dict with:
     - total_articles: Total count
     - saved_count: Saved articles (preserved)
     - unread_count: Unread articles (preserved)
+    - score_threshold: The threshold used
     - prunable_by_strategy: breakdown of articles to delete
     - preview_ids: Up to 100 article IDs that would be deleted
+    - articles_by_score: Distribution of articles at each score level (for slider UI)
     """
     from datetime import datetime, timedelta
 
@@ -733,24 +790,51 @@ def get_prunable_articles() -> dict:
         # Combine preview IDs (deduplicate)
         preview_ids = list(set(similar_ids + list(old_articles)))[:100]
 
+        # Calculate score distribution for all read, non-saved articles
+        score_distribution = {}
+        below_threshold_ids = []
+        below_threshold_count = 0
+
+        if score_threshold > 0:
+            articles_with_scores = get_articles_with_scores()
+            for article_data in articles_with_scores:
+                score = int(article_data["score"])
+                score_distribution[score] = score_distribution.get(score, 0) + 1
+                if article_data["score"] < score_threshold:
+                    below_threshold_count += 1
+                    if len(below_threshold_ids) < 100:
+                        below_threshold_ids.append(article_data["id"])
+
+        # Combine all deletion strategies
+        total_threshold_deletions = below_threshold_count
+        total_to_delete = duplicates_to_delete + old_count + total_threshold_deletions
+
         return {
             "total_articles": total,
             "saved_count": saved,
             "unread_count": unread,
+            "score_threshold": score_threshold,
             "prunable_by_strategy": {
                 "duplicates": duplicates_to_delete,
                 "old_articles": old_count,
-                "total": duplicates_to_delete + old_count,
+                "below_threshold": below_threshold_count,
+                "total": total_to_delete,
             },
-            "preview_ids": preview_ids,
+            "preview_ids": list(set(preview_ids + below_threshold_ids))[:100],
+            "score_distribution": score_distribution if score_threshold > 0 else {},
         }
 
 
-def prune_articles() -> dict:
-    """Execute article pruning: delete duplicates and old articles.
+def prune_articles(score_threshold: float = 0.0) -> dict:
+    """Execute article pruning: delete duplicates, old articles, and low-score articles.
 
     Uses engagement scoring to keep the best article per duplicate cluster.
-    Returns count of deleted articles.
+    Deletes any read/non-saved article with score < score_threshold.
+
+    Args:
+        score_threshold: Minimum engagement score to keep (0-100).
+
+    Returns count of deleted articles by strategy.
     """
     from datetime import datetime, timedelta
 
@@ -760,6 +844,7 @@ def prune_articles() -> dict:
         current_year_start = datetime(2026, 1, 1)
 
         deleted_count = 0
+        duplicates_deleted = 0
 
         # Delete duplicate articles (keeping the highest-scoring per title_hash)
         duplicates = db.execute(
@@ -806,6 +891,7 @@ def prune_articles() -> dict:
                         delete(ArticleModel).where(ArticleModel.id.in_(to_delete))
                     )
                     deleted_count += len(to_delete)
+                    duplicates_deleted += len(to_delete)
 
         # Delete old articles (count first)
         old_count_result = db.execute(
@@ -824,12 +910,24 @@ def prune_articles() -> dict:
         old_count = old_count_result.rowcount or 0
         deleted_count += old_count
 
+        # Delete articles below score threshold
+        threshold_count = 0
+        if score_threshold > 0:
+            articles_with_scores = get_articles_with_scores()
+            ids_to_delete = [a["id"] for a in articles_with_scores if a["score"] < score_threshold]
+
+            if ids_to_delete:
+                result = db.execute(
+                    delete(ArticleModel).where(ArticleModel.id.in_(ids_to_delete))
+                )
+                threshold_count = result.rowcount or 0
+                deleted_count += threshold_count
+
         db.commit()
 
         return {
             "deleted": deleted_count,
-            "duplicates_deleted": db.execute(
-                select(func.count(ArticleModel.id))
-                .where(ArticleModel.title_hash.isnot(None))
-            ).scalar() or 0,
+            "duplicates_deleted": duplicates_deleted,
+            "old_articles_deleted": old_count,
+            "threshold_deleted": threshold_count,
         }
