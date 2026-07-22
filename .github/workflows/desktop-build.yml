@@ -52,8 +52,7 @@ jobs:
           else
             source .venv/Scripts/activate
           fi
-          pip install -U pip
-          pip install -e "./backend[integrations,desktop]"
+          python -m pip install -e "./backend[integrations,desktop]"
 
       - name: Build sidecar
         shell: bash
