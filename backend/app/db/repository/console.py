@@ -88,6 +88,29 @@ def get_summarization_queue_count() -> int:
         return _queue_count(db)
 
 
+def cleanup_unsummarizable_articles() -> dict:
+    """Remove articles that cannot be summarized: '[No content to summarize]'.
+
+    These articles represent content that failed to extract/parse and cannot
+    ever be summarized. They take up database space without value.
+
+    Returns stats on deletion.
+    """
+    with SessionLocal() as db:
+        result = db.execute(
+            delete(ArticleModel).where(
+                ArticleModel.summary == "[No content to summarize]"
+            )
+        )
+        db.commit()
+
+        deleted = result.rowcount or 0
+        return {
+            "deleted": deleted,
+            "message": f"Deleted {deleted} articles that cannot be summarized",
+        }
+
+
 def cull_unsummarized_queue_to_limit(limit: int) -> int:
     """Keep up to `limit` unsummarized articles; cull the rest.
 
