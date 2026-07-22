@@ -28,7 +28,7 @@ from app.lib.server.rate_limit import ONE_HOUR_MS, TEN_MIN_MS, rate_limit
 
 router = APIRouter()
 
-MAX_BACKUPS = 3
+MAX_BACKUPS = 2
 
 
 @router.get(

@@ -1,9 +1,10 @@
 """Daily database backup job — port of src/lib/backup/scheduler.ts.
 
 Creates a clean SQLite snapshot via ``VACUUM INTO`` under data/backups with the
-``newsixity-auto-`` prefix, keeping only the 10 most recent. The blocking VACUUM
-runs in a worker thread so the event loop is never stalled. Scheduling (3 AM
-daily + an immediate startup backup) is handled by the APScheduler service.
+``newsixity-auto-`` prefix, keeping only the MAX_BACKUPS most recent. The
+blocking VACUUM runs in a worker thread so the event loop is never stalled.
+Scheduling (3 AM daily + an immediate startup backup) is handled by the
+APScheduler service.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from app.config import settings
 
 logger = logging.getLogger("newsixity")
 
-MAX_BACKUPS = 10
+MAX_BACKUPS = 2
 AUTO_PREFIX = "newsixity-auto-"
 
 
