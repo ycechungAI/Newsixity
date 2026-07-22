@@ -18,7 +18,7 @@ from app.db.models import Article as ArticleModel
 from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
 from app.db.repository.helpers import Article, map_article_row
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, reclaim_space
 from app.lib.utils.sanitize import strip_html
 from app.lib.utils.url import parse_http_url
 
@@ -41,6 +41,7 @@ def delete_article_by_id(article_id: int) -> None:
     with SessionLocal() as db:
         db.execute(delete(ArticleModel).where(ArticleModel.id == article_id))
         db.commit()
+        reclaim_space(db)
 
 
 def get_summarization_queue(limit: int = 20) -> list[SummarizationQueueItem]:
@@ -111,6 +112,7 @@ def cleanup_unsummarizable_articles() -> dict:
             )
         )
         db.commit()
+        reclaim_space(db)
 
         deleted = result.rowcount or 0
         return {
@@ -187,6 +189,9 @@ def cull_unsummarized_queue_to_limit(limit: int) -> int:
             db.execute(delete(ArticleModel).where(ArticleModel.id == article_id))
             deleted += 1
         db.commit()
+
+        if deleted:
+            reclaim_space(db)
 
     return deleted
 
@@ -285,6 +290,7 @@ def delete_manual_article(article_id: int) -> bool:
             )
         )
         db.commit()
+        reclaim_space(db)
         return result.rowcount > 0
 
 

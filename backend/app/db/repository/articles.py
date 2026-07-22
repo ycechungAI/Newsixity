@@ -17,7 +17,7 @@ from app.db.models import ArticleGroup as ArticleGroupModel
 from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
 from app.db.repository.helpers import Article, map_article_row, SPORTS_KEYWORDS, SUMMARIZE_CATEGORY_PRIORITY
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, reclaim_space
 from app.lib.utils.sanitize import strip_html
 from app.lib.utils.url import parse_http_url
 
@@ -29,11 +29,14 @@ def get_articles_by_category(
     unread_only: bool = False,
     promoted_only: bool = False,
     saved_only: bool = False,
+    exclude_saved: bool = False,
 ) -> list[Article]:
     """Get articles by category with optional filtering.
 
     Filters: category slug, unread-only, promoted-only, saved-only, and sports
-    keyword filter if slug == "sports".
+    keyword filter if slug == "sports". ``exclude_saved`` hides saved/favourited
+    articles (used by the non-Saved views, which only show unsaved articles —
+    saved articles live exclusively in the Saved tab).
     """
     with SessionLocal() as db:
         query = (
@@ -59,6 +62,8 @@ def get_articles_by_category(
 
         if saved_only:
             conditions.append(ArticleModel.is_saved == 1)
+        elif exclude_saved:
+            conditions.append(ArticleModel.is_saved == 0)
 
         # Sports filter: only basketball and Olympics
         if slug == "sports":
@@ -957,6 +962,9 @@ def prune_articles(score_threshold: float = 0.0) -> dict:
                 deleted_count += threshold_count
 
         db.commit()
+
+        if deleted_count:
+            reclaim_space(db)
 
         return {
             "deleted": deleted_count,
