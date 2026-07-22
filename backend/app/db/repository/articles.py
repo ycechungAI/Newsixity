@@ -28,11 +28,12 @@ def get_articles_by_category(
     offset: int = 0,
     unread_only: bool = False,
     promoted_only: bool = False,
+    saved_only: bool = False,
 ) -> list[Article]:
     """Get articles by category with optional filtering.
 
-    Filters: category slug, unread-only, promoted-only, and sports keyword filter
-    if slug == "sports".
+    Filters: category slug, unread-only, promoted-only, saved-only, and sports
+    keyword filter if slug == "sports".
     """
     with SessionLocal() as db:
         query = (
@@ -55,6 +56,9 @@ def get_articles_by_category(
 
         if promoted_only:
             conditions.append(ArticleModel.is_promoted == 1)
+
+        if saved_only:
+            conditions.append(ArticleModel.is_saved == 1)
 
         # Sports filter: only basketball and Olympics
         if slug == "sports":

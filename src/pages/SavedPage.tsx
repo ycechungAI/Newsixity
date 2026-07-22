@@ -37,10 +37,10 @@ export default function SavedPage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/categories").then(r => r.json()),
-      fetch("/api/articles?limit=1000").then(r => r.json()),
+      fetch("/api/articles?saved=true&limit=1000").then(r => r.json()),
     ])
       .then(([cats, arts]: [Category[], Article[]]) => {
-        const saved = (arts || []).filter((a: Article) => a.isSaved);
+        const saved = arts || [];
         const counts = new Map<string, { total: number; unread: number }>();
 
         (cats || []).forEach((cat: Category) => {
