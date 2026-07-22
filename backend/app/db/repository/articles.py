@@ -550,8 +550,8 @@ def mark_stuck_unsummarized_timed_out() -> int:
 
 
 def reset_failed_and_skipped_articles() -> dict:
-    """Clear summary/summary_model for articles marked failed or skipped, so
-    the summarizer will retry them. Returns {"count": <rows affected>}."""
+    """Clear summary/summary_model for articles marked failed, skipped, or timed out,
+    so the summarizer will retry them. Returns {"count": <rows affected>}."""
     with SessionLocal() as db:
         result = db.execute(
             update(ArticleModel)
@@ -559,6 +559,7 @@ def reset_failed_and_skipped_articles() -> dict:
                 or_(
                     ArticleModel.summary.like("[Summarization failed:%"),
                     ArticleModel.summary == "[No content to summarize]",
+                    ArticleModel.summary == "[Skipped: summarization timed out]",
                 )
             )
             .values(summary=None, summary_model=None)
