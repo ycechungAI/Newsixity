@@ -79,9 +79,10 @@ export default function ArticleList({
   const all = flatten(articles, groups);
   if (all.length === 0) return <Empty message={emptyMessage} />;
 
-  // Sources view — grouped by feed name
+  // Sources view — grouped by feed name (sorted alphabetically)
   if (viewMode === "sources") {
     const bySource = groupBy(all, a => a.feedName ?? "Unknown");
+    bySource.sort((a, b) => a[0].localeCompare(b[0]));
     return (
       <div>
         {bySource.map(([src, arts]) => (
