@@ -362,6 +362,54 @@ class ArticlesMarkAllReadRequestBody(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ArticlesBulkMarkReadRequestBody(BaseModel):
+    articleIds: list[int] = Field(validation_alias="article_ids")
+
+    model_config = {"populate_by_name": True}
+
+
+# Podcast schemas
+
+
+class PodcastFeedSchema(BaseModel):
+    id: int
+    title: str
+    feedUrl: str = Field(validation_alias="feed_url")
+    siteUrl: Optional[str] = Field(validation_alias="site_url", default=None)
+    description: Optional[str] = None
+    imageUrl: Optional[str] = Field(validation_alias="image_url", default=None)
+    author: Optional[str] = None
+    isFavorite: bool = Field(validation_alias="is_favorite", default=False)
+    lastFetchedAt: Optional[str] = Field(validation_alias="last_fetched_at", default=None)
+    lastError: Optional[str] = Field(validation_alias="last_error", default=None)
+    createdAt: str = Field(validation_alias="created_at")
+
+    model_config = {"populate_by_name": True}
+
+
+class PodcastEpisodeSchema(BaseModel):
+    id: int
+    podcastId: int = Field(validation_alias="podcast_id")
+    guid: str
+    title: str
+    audioUrl: str = Field(validation_alias="audio_url")
+    durationSeconds: Optional[int] = Field(validation_alias="duration_seconds", default=None)
+    publishedAt: Optional[str] = Field(validation_alias="published_at", default=None)
+    description: Optional[str] = None
+    isFavorite: bool = Field(validation_alias="is_favorite", default=False)
+    progressSeconds: int = Field(validation_alias="progress_seconds", default=0)
+    isPlayed: bool = Field(validation_alias="is_played", default=False)
+    createdAt: str = Field(validation_alias="created_at")
+
+    model_config = {"populate_by_name": True}
+
+
+class PodcastSubscribeSchema(BaseModel):
+    feedUrl: str = Field(validation_alias="feed_url")
+
+    model_config = {"populate_by_name": True}
+
+
 # Response/utility schemas
 
 

@@ -7,9 +7,12 @@ Port of tests/security/input.test.ts. Covers:
  - Video URL extraction: no SSRF via malformed video URLs
 """
 
+import socket as socket_module
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from app.lib.dedup.similarity import normalize_title_for_hash
+from app.lib.integrations.content import is_blocked_ip, resolves_to_blocked_ip
 from app.lib.utils.sanitize import extract_image_from_html, strip_html
 from app.lib.utils.url import parse_http_url
 from app.lib.utils.video import extract_video_info
@@ -116,6 +119,69 @@ class TestParseHttpUrlSsrfAdjacentInputs:
 
     def test_rejects_whitespace_only_input(self):
         assert parse_http_url("     ") is None
+
+
+class TestIsBlockedIpLiteralChecks:
+    def test_blocks_loopback_ipv4(self):
+        assert is_blocked_ip("127.0.0.1") is True
+
+    def test_blocks_private_ipv4_ranges(self):
+        assert is_blocked_ip("10.0.0.5") is True
+        assert is_blocked_ip("172.16.0.1") is True
+        assert is_blocked_ip("192.168.1.1") is True
+
+    def test_blocks_link_local_ipv4_including_cloud_metadata(self):
+        assert is_blocked_ip("169.254.169.254") is True
+
+    def test_blocks_loopback_ipv6(self):
+        assert is_blocked_ip("::1") is True
+
+    def test_allows_public_ipv4(self):
+        assert is_blocked_ip("8.8.8.8") is False
+
+    def test_fails_closed_on_unparseable_input(self):
+        assert is_blocked_ip("not-an-ip") is True
+
+
+class TestResolvesToBlockedIpHostnameGate:
+    """Regression coverage for a bug where every hostname was blocked.
+
+    ``resolves_to_blocked_ip`` used to call ``is_blocked_ip(hostname)``
+    unconditionally as its "is this already an IP" check. For a real
+    hostname, ``is_blocked_ip`` fails to parse it as an IP, swallows the
+    exception, and fails closed (returns True) — so the function returned
+    True for *every* non-IP hostname before ever reaching DNS resolution,
+    silently blocking all legitimate fetches (fetch_article_content).
+    """
+
+    def test_blocks_known_blocked_hostnames_without_dns(self):
+        assert resolves_to_blocked_ip("localhost") is True
+        assert resolves_to_blocked_ip("0.0.0.0") is True
+
+    def test_ip_literal_input_is_checked_directly(self):
+        assert resolves_to_blocked_ip("127.0.0.1") is True
+        assert resolves_to_blocked_ip("169.254.169.254") is True
+
+    def test_allows_hostname_resolving_to_public_ip(self):
+        with patch(
+            "app.lib.integrations.content.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            assert resolves_to_blocked_ip("example.com") is False
+
+    def test_blocks_hostname_resolving_to_private_ip(self):
+        with patch(
+            "app.lib.integrations.content.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("10.0.0.5", 0))],
+        ):
+            assert resolves_to_blocked_ip("attacker-controlled-dns.example") is True
+
+    def test_fails_closed_on_dns_resolution_failure(self):
+        with patch(
+            "app.lib.integrations.content.socket.getaddrinfo",
+            side_effect=socket_module.gaierror("name resolution failed"),
+        ):
+            assert resolves_to_blocked_ip("this-host-does-not-exist.invalid") is True
 
 
 class TestNormalizeTitleForHashPrefixInjectionResistance:

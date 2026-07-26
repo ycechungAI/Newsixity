@@ -65,7 +65,7 @@ def get_articles_by_category(
         elif exclude_saved:
             conditions.append(ArticleModel.is_saved == 0)
 
-        # Sports filter: only basketball and Olympics
+        # Sports filter: see SPORTS_KEYWORDS for covered concepts
         if slug == "sports":
             sports_or = or_(
                 *[ArticleModel.title.ilike(kw) for kw in SPORTS_KEYWORDS]
@@ -113,6 +113,33 @@ def get_article_by_id(article_id: int) -> Article | None:
             "feed_name": row.feed_name,
             "category_slug": row.category_slug,
         })
+
+
+def get_articles_by_ids(article_ids: list[int]) -> list[Article]:
+    """Get multiple articles by IDs in a single query."""
+    if not article_ids:
+        return []
+
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(
+                ArticleModel,
+                FeedModel.name.label("feed_name"),
+                CategoryModel.slug.label("category_slug"),
+            )
+            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+            .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
+            .where(ArticleModel.id.in_(article_ids))
+        ).all()
+
+        return [
+            map_article_row({
+                **row[0].__dict__,
+                "feed_name": row.feed_name,
+                "category_slug": row.category_slug,
+            })
+            for row in rows
+        ]
 
 
 def get_article_by_title_hash(
@@ -338,6 +365,21 @@ def mark_article_unread(article_id: int) -> None:
         if article:
             article.is_read = 0
             db.commit()
+
+
+def mark_articles_read(article_ids: list[int]) -> int:
+    """Mark multiple articles as read in a single UPDATE. Returns rows affected."""
+    if not article_ids:
+        return 0
+
+    with SessionLocal() as db:
+        result = db.execute(
+            update(ArticleModel)
+            .where(ArticleModel.id.in_(article_ids), ArticleModel.is_read == 0)
+            .values(is_read=1)
+        )
+        db.commit()
+        return result.rowcount
 
 
 def mark_all_read_by_category(slug: str | None = None) -> int:

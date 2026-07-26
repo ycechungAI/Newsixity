@@ -116,6 +116,7 @@ class Article(Base):
         Index("idx_articles_feed_id", "feed_id"),
         Index("idx_articles_group_id", "group_id"),
         Index("idx_articles_published_at", text("published_at DESC")),
+        Index("idx_articles_is_read_published", "is_read", text("published_at DESC")),
         Index("idx_articles_title_hash", "title_hash"),
         Index("idx_articles_is_saved", "is_saved", sqlite_where=text("is_saved = 1")),
         Index("idx_articles_promoted", "is_promoted", sqlite_where=text("is_promoted = 1")),
@@ -240,5 +241,49 @@ class UserPreference(Base):
     __table_args__ = (
         UniqueConstraint("category_slug", "keyword", name="uq_user_preferences_category_keyword"),
         Index("idx_user_preferences_category", "category_slug"),
+        {"sqlite_autoincrement": True},
+    )
+
+
+class PodcastFeed(Base):
+    __tablename__ = "podcast_feeds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    feed_url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    site_url: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(Text)
+    is_favorite: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_fetched_at: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = {"sqlite_autoincrement": True}
+
+
+class PodcastEpisode(Base):
+    __tablename__ = "podcast_episodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    podcast_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("podcast_feeds.id"), nullable=False
+    )
+    guid: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    audio_url: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    published_at: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_favorite: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    progress_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    is_played: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = (
+        UniqueConstraint("podcast_id", "guid", name="uq_podcast_episodes_podcast_guid"),
+        Index("idx_podcast_episodes_podcast_id", "podcast_id"),
+        Index("idx_podcast_episodes_published_at", text("published_at DESC")),
         {"sqlite_autoincrement": True},
     )

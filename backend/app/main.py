@@ -89,6 +89,7 @@ from app.routers import (
     finance,
     health,
     ollama,
+    podcasts,
     preferences,
     research,
     settings as settings_router,
@@ -105,6 +106,7 @@ app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(ollama.router, prefix="/api", tags=["ollama"])
 app.include_router(research.router, prefix="/api", tags=["research"])
 app.include_router(summarize.router, prefix="/api", tags=["summarize"])
+app.include_router(podcasts.router, prefix="/api", tags=["podcasts"])
 app.include_router(console.router, prefix="/api", tags=["console"])
 
 

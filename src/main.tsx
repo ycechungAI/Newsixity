@@ -11,6 +11,7 @@ import WeatherPage from "./pages/WeatherPage";
 import SavedPage from "./pages/SavedPage";
 import SettingsPage from "./pages/SettingsPage";
 import ConsolePage from "./pages/ConsolePage";
+import PodcastsPage from "./pages/PodcastsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 createRoot(document.getElementById("root")!).render(
@@ -27,6 +28,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="finance/news" element={<FinanceNewsPage />} />
           <Route path="weather" element={<WeatherPage />} />
           <Route path="saved" element={<SavedPage />} />
+          <Route path="podcasts" element={<PodcastsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="console" element={<ConsolePage />} />
           <Route path="*" element={<NotFoundPage />} />

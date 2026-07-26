@@ -4,34 +4,39 @@
 
 ### Prerequisites
 - Node.js 20+ and npm
+- Python 3.11+
 - Ollama (required for summarization and deep research features)
-- SQLite is bundled via `better-sqlite3` (no separate install required)
 
 ### Install dependencies
 ```bash
 npm install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e "./backend[integrations]"
 ```
 
 ### Install git hooks (auto-linter)
 ```bash
-npm run hooks:install
+sh scripts/install-hooks.sh
 ```
 
 This installs a pre-commit hook that runs ESLint automatically before every `git commit`.
 
 ### Run the app
-Option A (recommended for full local behavior):
 ```bash
 ./start.sh
 ```
 
-Option B (manual):
-```bash
-ollama serve
-npm run dev
-```
+This starts the FastAPI backend (`:8000`, auto-reload) and the Vite dev server
+(`:5173`, which proxies `/api/*` to the backend) in parallel.
 
-App URL: `http://localhost:3000`
+Frontend: `http://localhost:5173`
+Backend + API docs: `http://localhost:8000/docs`
+
+### Stop services
+```bash
+./stop.sh
+```
 
 ### Optional Deep Research setup
 Use the Settings page (`/settings`) and configure:
@@ -47,112 +52,101 @@ export NEWSIXITY_SETTINGS_ENCRYPTION_KEY="long-random-secret"
 
 `NEWSIXITY_SETTINGS_ENCRYPTION_KEY` is required to persist sensitive settings
 (e.g. `brave_search_api_key`) in SQLite. Without it, API keys must be
-provided via environment variables.
-
-### Stop services
-```bash
-./stop.sh
-```
+provided via environment variables. See [deep-research.md](deep-research.md).
 
 ---
 
 ## 2. Project Structure Overview
 
+Newsixity is a **FastAPI (Python) backend + Vite/React (TypeScript) frontend**.
+In production the backend serves the built SPA (`dist/`) and the `/api/*`
+surface from a single origin — there is no Node runtime at production time.
+
 ### Top-level
-- `src/` — application code
-- `tests/` — automated test suites
-- `scripts/` — developer tooling (git hook installer)
-- `data/` — SQLite DB + backups (git-ignored)
-- `docs/` — project docs and plans
-- `start.sh`, `stop.sh` — local service scripts
+- `src/` — frontend application code (React, TypeScript)
+- `backend/` — FastAPI backend, SQLAlchemy models, business logic
+- `data/` — SQLite DB + backups (dev mode, git-ignored)
+- `docs/` — project docs
+- `src-tauri/` — Tauri desktop shell (macOS/Windows/Linux packaging)
+- `start.sh`, `stop.sh` — local dev service scripts
 
-### `src/app`
-- App Router pages (`page.tsx`, category/article/saved/settings/console pages)
-- API routes under `src/app/api/*`
+### `backend/app`
+| Concern | Location |
+|---|---|
+| SQLAlchemy models | `backend/app/db/models.py` |
+| Query layer | `backend/app/db/repository/*.py` |
+| Pydantic schemas | `backend/app/schemas.py` |
+| HTTP routes | `backend/app/routers/*.py` |
+| Router registration | `backend/app/main.py` |
+| Scheduled jobs (RSS refresh, summarize, backup) | `backend/app/lib/scheduler/*.py` |
+| DB bootstrap + seed | `backend/app/db/init_db.py` |
+| Auth, rate limiting | `backend/app/lib/server/*.py` |
+| RSS/podcast parsing, content extraction, integrations | `backend/app/lib/{integrations,podcast}/*.py` |
+| Ranking (scoring/promotion/preferences) | `backend/app/lib/ranking/*.py` |
+| Deep research orchestration | `backend/app/lib/research/*.py` |
 
-### `src/components`
-UI components by domain:
-- `articles/` — feed, cards, groups, research modal, search results
-- `finance/` — dashboard, charts, heatmap, watchlist
-- `weather/` — current conditions, forecast
-- `layout/` — header, sidebar, topbar
-- `ui/` — shared primitives (modals, pagination, toggles)
+### `src/`
+- `src/pages/*.tsx` — one file per route (`HomePage`, `CategoryPage`, `PodcastsPage`, etc.)
+- `src/components/*` — UI components by domain (`articles/`, `finance/`, `podcasts/`, `layout/`, `ui/`, `weather/`)
+- `src/lib/*` — client-side utilities (date, sanitize, URL, video, article mark-read queue)
+- `src/types/index.ts` — shared TypeScript interfaces, camelCase to match API responses
+- `src/main.tsx` — React Router route table
+- `src/app/globals.css` — the entire stylesheet (no component library — plain CSS with `var(--*)` design tokens, theme-aware via `.dark` / `prefers-color-scheme`)
 
-### `src/lib`
-- `db/` — SQLite connection, schema, query functions
-- `rss/` — feed definitions, fetching, scheduling
-- `ollama/` — summarization/research clients + background scheduler
-- `research/` — web search and orchestration
-- `ranking/` — scoring, promotion, preference learning
-- `content/` — article content extraction (HTTP + headless Chromium fallback)
-- `dedup/` — bigram-similarity duplicate detection
-- `backup/` — DB backup scheduler
-- `finance/`, `weather/` — external data integrations
-- `server/` — auth, rate limiting, request parsing, response helpers
-- `utils/` — date, sanitize, URL, video, search utilities
-- `logger/` — console/log utilities
-
-### `src/types`
-Shared TypeScript interfaces used across UI, API, and services.
-
-### `tests/`
-- `tests/basic/` — unit tests for utility functions (no I/O)
-- `tests/security/` — input hardening and API access control tests
-- `tests/database/` — schema and CRUD tests using isolated in-memory SQLite
-- `tests/setup/loader.mjs` — ESM loader for `next/server` resolution in test environment
+### `backend/tests/`
+- `backend/tests/basic/` — unit tests for utility functions (no I/O)
+- `backend/tests/security/` — input hardening and API access control tests
+- `backend/tests/database/` — schema and CRUD tests
+- `backend/tests/integration/` — RSS fetch, static route serving
 
 ---
 
-## 3. npm Scripts Reference
+## 3. Command Reference
 
-| Script | Description |
+| Command | Description |
 |---|---|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm run start` | Serve production build |
+| `npm run dev` | Start Vite dev server only |
+| `npm run build` | Production frontend build (emits `dist/`) |
 | `npm run lint` | Run ESLint (check, no changes) |
 | `npm run lint:fix` | Run ESLint and auto-fix issues |
-| `npm run hooks:install` | Install git pre-commit lint hook |
-| `npm run tests` | Run lint + all test suites |
-| `npm run test:basic` | Utility and parsing unit tests |
-| `npm run test:security` | Input hardening and auth tests |
-| `npm run test:db` | Schema and CRUD tests (in-memory DB) |
-| `npm run audit` | npm security audit (all deps) |
-| `npm run audit:prod` | npm security audit (prod deps only) |
+| `sh scripts/install-hooks.sh` | Install git pre-commit lint hook |
+| `.venv/bin/python -m pytest backend/tests` | Run the full backend test suite |
+| `./start.sh` | Start backend (`:8000`) + frontend (`:5173`) together |
+| `./stop.sh` | Stop both services |
 
 ---
 
 ## 4. Development Workflow
 
-1. Start local services (`./start.sh` or `ollama serve` + `npm run dev`).
-2. Make changes in `src/` using the `@/*` path alias (`@/` maps to `src/`).
-3. If you change the data model:
-   - Update `src/lib/db/schema.ts` (schema/migrations — use `ALTER TABLE … ADD COLUMN IF NOT EXISTS` pattern)
-   - Update `src/lib/db/queries.ts`
-   - Update related `src/types/index.ts`
+1. Start local services (`./start.sh`).
+2. Frontend changes go in `src/`, using the `@/*` path alias (`@/` maps to `src/`).
+3. Backend changes go in `backend/app/`. If you change the data model:
+   - Update `backend/app/db/models.py`
+   - Add/extend a repository function in `backend/app/db/repository/*.py`
+   - Update the matching Pydantic schema in `backend/app/schemas.py`
+   - **New indexes on existing tables** need an explicit `CREATE INDEX IF NOT EXISTS` in `init_db.py` — `Base.metadata.create_all()` only creates missing tables, it never alters existing ones (see the comment at the top of `init_db.py`).
 4. If you add/modify API routes:
-   - Call `checkApiAccess(request)` at the top of the handler
-   - Validate inputs with Zod and `parseJsonBody`/`parseOptionalJsonBody`
-   - Return consistent status codes using helpers in `src/lib/server/api-response.ts`
+   - Create `backend/app/routers/<name>.py` with `router = APIRouter()`
+   - Register it in `backend/app/main.py` with `prefix="/api"` and `tags=["<name>"]`
+   - Routes inside the file should **not** repeat the `/api` prefix — it's added once at registration
 5. Run quality checks before committing:
 ```bash
-npm run lint:fix   # fix any lint issues
-npm run tests      # lint + all 222 tests
-npm run build      # confirm TypeScript compiles
+npm run lint:fix
+.venv/bin/python -m pytest backend/tests
+npx tsc --noEmit -p .
 ```
 6. Run manual smoke checks in the browser:
-   - Feed refresh
-   - Article open/save/read toggles
+   - Feed refresh, article open/save/read toggles
    - Console page (`/console`)
    - Settings page (`/settings`)
-   - Finance and weather pages
+   - Podcasts, Finance, Weather pages
 
 ---
 
 ## 5. Auto-Linter & Code Quality
 
 ### ESLint configuration
-ESLint is configured in `eslint.config.mjs` using `eslint-config-next` with TypeScript support.
+ESLint is configured in `eslint.config.js` with TypeScript support.
 
 ### Commands
 ```bash
@@ -163,7 +157,7 @@ npm run lint:fix     # auto-fix issues in place
 ### Pre-commit hook (recommended)
 Install once after cloning:
 ```bash
-npm run hooks:install
+sh scripts/install-hooks.sh
 ```
 
 The hook runs `npm run lint` before every commit. If there are lint errors, the commit is blocked.
@@ -178,68 +172,58 @@ git commit --no-verify -m "message"
 
 ### Running tests
 ```bash
-npm run tests          # full pipeline: lint + test:basic + test:security + test:db
-npm run test:basic     # utility and parsing unit tests (129 tests)
-npm run test:security  # input hardening and auth tests (54 tests)
-npm run test:db        # schema and CRUD tests (39 tests, in-memory SQLite)
+.venv/bin/python -m pytest backend/tests -q
 ```
 
 ### Test runner
-Tests use **Node.js's built-in `node --test` runner** with `--experimental-strip-types` for native TypeScript support. No extra testing framework (Jest, Vitest, etc.) is needed.
+Backend tests use **pytest**. There is no separate frontend test suite —
+frontend correctness is checked via `npx tsc --noEmit` and manual/browser
+verification.
 
 ### Test layout
 
 ```
-tests/
-├── basic/
-│   ├── sanitize.test.ts    # stripHtml, truncate, extractImageFromHtml
-│   ├── date.test.ts        # timeAgo, formatDate
-│   ├── video.test.ts       # extractVideoInfo, isVideoUrl (all platforms)
-│   ├── similarity.test.ts  # normalizeTitleForHash, bigramSimilarity, isDuplicate
-│   ├── url.test.ts         # parseHttpUrl, isHttpUrl
-│   └── search.test.ts      # detectSearchEngine, isSearchEngineUrl
-├── security/
-│   ├── auth.test.ts        # checkApiAccess: local trust, CSRF, tokens, admin paths
-│   └── input.test.ts       # XSS, protocol enforcement, credential injection, SSRF
-├── database/
-│   ├── schema.test.ts      # initializeSchema: tables, seeds, migrations, idempotency
-│   └── crud.test.ts        # CRUD: constraints, foreign keys, defaults, read/write
-└── setup/
-    └── loader.mjs          # ESM hook: maps next/server → next/server.js for tests
+backend/tests/
+├── basic/         # utility and parsing unit tests
+├── security/      # SSRF, XSS, auth, input-hardening tests
+├── database/      # schema and CRUD tests
+└── integration/   # RSS fetch, static route serving
 ```
-
-### Writing new tests
-- Import source modules using **relative paths** (e.g. `../../src/lib/utils/sanitize.ts`) — `@/` aliases are not resolved by Node's test runner.
-- For tests that import from `next/server`, add `--import ./tests/setup/loader.mjs` to the test command.
-- Database tests should use an **in-memory SQLite database** (`new Database(':memory:')`) — never the real `data/newsixity.db`.
 
 ---
 
 ## 7. Security Architecture
 
-### API access control (`src/lib/server/auth.ts`)
-- **Local requests** (host: `localhost`, `127.0.0.1`, `::1`) are trusted without a token.
-- **Remote requests** require a `NEWSIXITY_API_TOKEN` or `NEWSIXITY_ADMIN_TOKEN` (Bearer header or `X-Newsixity-Token` header).
-- **Admin paths** (`/api/console`, `/api/settings`, `/api/feeds/refresh`, `/api/feeds/weights`, `/api/summarize`, `/api/preferences`) require the admin token even when an API token is configured.
-- **CSRF**: mutating requests (POST/PUT/DELETE) are blocked if `Sec-Fetch-Site: cross-site` or if the `Origin` header doesn't match the `Host`.
+### API access control (`backend/app/lib/server/auth.py`)
+- **Local requests** (host: `localhost`, `127.0.0.1`, `::1`, or a loopback `X-Forwarded-For`) are trusted without a token. This is what makes the desktop app (Tauri webview → loopback backend) work with zero token wiring.
+- **Remote requests** require `NEWSIXITY_ADMIN_TOKEN` or `NEWSIXITY_API_TOKEN` (Bearer header or `X-Newsixity-Token`).
+- **Admin paths** (`/api/console`, `/api/settings`, `/api/feeds/refresh`, `/api/feeds/weights`, `/api/summarize`, `/api/preferences`) require the admin token even when only an API token is configured.
+- **CSRF**: mutating requests are blocked if `Sec-Fetch-Site: cross-site` or if `Origin` doesn't match `Host`.
 
-### Rate limiting (`src/lib/server/rate-limit.ts`)
-In-memory token-bucket limiter. Apply to expensive endpoints with `enforceRateLimit(request, { routeKey, limit, windowMs })`.
+### Rate limiting (`backend/app/lib/server/rate_limit.py`)
+In-memory fixed-window limiter, applied per-route via `Depends(rate_limit(route_key, limit, window_ms))`.
 
-### SSRF protection (`src/lib/content/fetcher.ts`)
-All outbound URL fetches are validated via `parseHttpUrl` (rejects non-HTTP, credentials) then checked against a private-IP blocklist before the HTTP request is issued.
+### SSRF protection (`backend/app/lib/integrations/content.py`)
+Server-side URL fetches (article content extraction, podcast feed
+subscription) are validated with `parse_http_url()` (rejects non-http(s)
+schemes and credential-bearing URLs) then `resolves_to_blocked_ip()`
+(DNS-resolves the hostname and blocks private/loopback/link-local
+addresses, failing closed on lookup failure). Reuse these two functions —
+don't write new fetch logic — for any new endpoint that fetches a
+user-supplied URL server-side.
 
 ### Input sanitization
-- `stripHtml` in `src/lib/utils/sanitize.ts` strips all HTML tags before storing or displaying user-facing content.
-- `parseHttpUrl` in `src/lib/utils/url.ts` rejects dangerous protocols (`javascript:`, `file://`, etc.) and credential-bearing URLs.
+- `strip_html` (`backend/app/lib/utils/sanitize.py`) strips HTML before storing/displaying user-facing content.
+- `parse_http_url` (`backend/app/lib/utils/url.py`) rejects dangerous protocols and credential-bearing URLs.
 
 ---
 
 ## 8. Common Troubleshooting
 
-### Port 3000 already in use
+### Port 5173 or 8000 already in use
 ```bash
-lsof -ti:3000 | xargs kill -9
+lsof -ti:5173 | xargs kill -9
+lsof -ti:8000 | xargs kill -9
 ```
 
 ### Ollama appears offline
@@ -247,7 +231,7 @@ lsof -ti:3000 | xargs kill -9
 ollama serve
 curl http://localhost:11434
 ```
-Then confirm host/model in `/settings`.
+Then confirm host/model in `/settings`, or check `/api/health`.
 
 ### Articles not updating
 - Trigger refresh from the UI (top bar) or `POST /api/feeds/refresh`
@@ -256,28 +240,11 @@ Then confirm host/model in `/settings`.
 
 ### SQLite issues (corruption/lock/startup errors)
 1. Stop the app.
-2. Restore a backup from `data/backups/`:
-```bash
-cp data/newsixity.db data/newsixity.db.old
-cp data/backups/<backup-file>.db data/newsixity.db
-```
+2. Restore a backup (see [backup.md](backup.md)).
 3. Restart the app.
 
-### Native module issues after Node upgrade (`better-sqlite3`)
-```bash
-rm -rf node_modules package-lock.json
-npm install
-```
-
-### Browser-based extraction fails
-Ensure Chromium is available for `playwright-core`:
-```bash
-npx playwright-core install chromium
-```
-Prefer configuring Brave Search API in `/settings` for research reliability.
-
-### Lint errors in tests
-If you add new test files and lint complains, make sure:
-- Unused imports are removed
-- Variables are typed or use `as never` for duck-typed mock arguments
-- Run `npm run lint:fix` to auto-resolve most issues
+### `.venv` points at a stale path
+`start.sh` detects this automatically (the venv's activate script bakes in
+an absolute path at creation time, so a renamed/moved repo folder breaks
+it) and rebuilds `.venv`. If you're setting up manually instead, just
+`rm -rf .venv` and recreate it.

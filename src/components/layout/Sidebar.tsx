@@ -165,6 +165,7 @@ export default function Sidebar({ categories }: SidebarProps) {
 
         <span className="nav-section-label" style={{ marginTop: 8 }}>Library</span>
         <Link to="/saved" className={`nav-link${pathname === "/saved" ? " active" : ""}`}>Saved</Link>
+        <Link to="/podcasts" className={`nav-link${pathname === "/podcasts" ? " active" : ""}`}>Podcasts</Link>
       </div>
 
       <div className="sb-footer">

@@ -12,7 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import settings
@@ -32,6 +32,7 @@ DEFAULT_CATEGORIES: list[tuple[str, str, int]] = [
     ("Weather", "weather", 5),
     ("Top News", "top-news", 6),
     ("Others", "others", 7),
+    ("Security", "security", 9),
 ]
 
 MANUAL_LINKS_FEED = {"name": "Manual Links", "url": "internal://manual", "enabled": 1}
@@ -74,6 +75,14 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
 
+    # create_all doesn't alter existing tables, so explicitly create any indexes
+    # on existing tables that weren't already there (e.g., the compound index on
+    # articles added post-migration).
+    with SessionLocal() as session:
+        session.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_articles_is_read_published ON articles(is_read, published_at DESC)")
+        )
+
     with SessionLocal() as session:
         for name, slug, sort_order in DEFAULT_CATEGORIES:
             stmt = (
@@ -96,6 +105,46 @@ def init_db() -> None:
                 .on_conflict_do_nothing()
             )
             session.execute(stmt)
-            session.commit()
+
+        security_id = session.execute(
+            select(Category.id).where(Category.slug == "security")
+        ).scalar_one_or_none()
+
+        if security_id is not None:
+            security_feeds = [
+                {"name": "Data Breaches", "url": "https://databreaches.net/feed/"},
+                {"name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/"},
+                {"name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/"},
+                {"name": "The Hacker News", "url": "https://feeds.feedburner.com/TheHackersNews"},
+                {"name": "Schneier on Security", "url": "https://www.schneier.com/feed/atom/"},
+                {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
+            ]
+            for feed in security_feeds:
+                stmt = (
+                    sqlite_insert(Feed)
+                    .values(category_id=security_id, **feed)
+                    .on_conflict_do_nothing()
+                )
+                session.execute(stmt)
+
+        sports_id = session.execute(
+            select(Category.id).where(Category.slug == "sports")
+        ).scalar_one_or_none()
+
+        if sports_id is not None:
+            sports_feeds = [
+                {"name": "ESPN Tennis", "url": "https://www.espn.com/espn/rss/tennis/news"},
+                {"name": "Sportsnet", "url": "https://www.sportsnet.ca/rss"},
+                {"name": "ESPN Soccer", "url": "https://www.espn.com/espn/rss/soccer/news"},
+            ]
+            for feed in sports_feeds:
+                stmt = (
+                    sqlite_insert(Feed)
+                    .values(category_id=sports_id, **feed)
+                    .on_conflict_do_nothing()
+                )
+                session.execute(stmt)
+
+        session.commit()
 
     logger.info("Database initialized (schema ensured, defaults seeded).")
