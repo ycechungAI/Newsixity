@@ -112,9 +112,28 @@ SUMMARIZE_CATEGORY_PRIORITY = [
     "sports",
 ]
 
-# Sports title filter patterns
+# Sports title filter patterns.
+#
+# `.ilike()` is case-insensitive, so each concept needs only one lowercase
+# entry. Validated against a live ~630-article DB (2026-07-26): within the
+# sports category (dedicated outlets — ESPN, BBC Sport, CBS Sports, Bleacher
+# Report, Sportsnet, etc., not general-news feeds), "%canada%" and
+# "%football%" had zero and one false positive respectively, so the generic
+# terms are not gated. Re-validate if a general-interest feed is ever added
+# to the sports category.
 SPORTS_KEYWORDS = (
-    "%basketball%", "%Basketball%",
-    "%NBA%", "%NCAA%",
-    "%olympic%", "%Olympic%", "%Olympics%"
+    # Existing
+    "%basketball%", "%nba%", "%ncaa%",
+    "%olympic%", "%paralympic%",
+    # Tennis
+    "%tennis%", "%atp %", "%wta %", "%wimbledon%",
+    "%us open%", "%french open%", "%roland garros%", "%australian open%",
+    # World cups / international
+    "%world cup%", "%fifa%", "%uefa%", "%champions league%",
+    "%commonwealth games%", "%pan am games%",
+    # Other majors
+    "%soccer%", "%football%", "%cricket%", "%rugby%",
+    "%hockey%", "%nhl%", "%formula 1%", "%grand prix%",
+    # Canada
+    "%canada%", "%canadian%", "%team canada%",
 )

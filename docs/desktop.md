@@ -14,9 +14,18 @@ Newsixity is packaged as a native desktop application using Tauri, a lightweight
 # Ensure dependencies are installed
 npm install
 
-# Build the frontend and freeze the backend, then package as .app
-./backend/build_sidecar.sh
-npx tauri build
+# One command: builds the frontend, freezes the backend, packages as .app + .dmg
+./build-desktop-mac.sh
+```
+
+This is the single entry point for rebuilding after **any** code change —
+frontend, backend, or both — no matter which tool or session made the edit.
+It always builds from whatever is currently on disk. Under the hood it's the
+same two steps as before (kept as separate scripts in case you only need one):
+
+```bash
+./backend/build_sidecar.sh   # frontend build + PyInstaller freeze + resource install
+npx tauri build               # Rust shell compile + .app/.dmg packaging
 ```
 
 The packaged app will be created at:
@@ -31,14 +40,6 @@ The packaged app will be created at:
 4. **Tauri build** (`npx tauri build`): Compiles the Rust shell, embeds the resource, and produces the `.app` bundle and `.dmg`.
 
 ### Troubleshooting
-
-**"output directory is not empty" error during PyInstaller freeze:**
-```bash
-rm -rf backend/build backend/dist
-./backend/build_sidecar.sh
-```
-
-PyInstaller's `COLLECT` step fails if the output directory contains stale content. Clean both directories before rebuilding.
 
 **Compilation takes a long time:**
 The first build compiles Rust and PyInstaller bundles heavy dependencies (pandas, numpy, lxml). Subsequent builds are faster.

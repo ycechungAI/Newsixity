@@ -18,6 +18,7 @@ from app.db.repository import (
     get_article_by_id,
     get_article_by_title_hash,
     get_articles_by_category,
+    get_articles_by_ids,
     get_category_articles_count_in_last_24h,
     get_feed_category_slug,
     upsert_article,
@@ -141,18 +142,11 @@ def _run_feed_refresh_sync(
                 inserted_this_session_by_category[category_slug] = (
                     inserted_this_session_by_category.get(category_slug, 0) + 1
                 )
-                inserted = get_article_by_id(inserted_id)
-                if inserted:
-                    existing_articles.append(inserted)
-                    new_articles_by_category.setdefault(category_slug, []).append(
-                        inserted_id
-                    )
+                new_articles_by_category.setdefault(category_slug, []).append(inserted_id)
 
     # Group new articles by category.
     for slug, article_ids in new_articles_by_category.items():
-        articles: list[Article] = [
-            a for a in (get_article_by_id(i) for i in article_ids) if a is not None
-        ]
+        articles = get_articles_by_ids(article_ids)
         if articles:
             try:
                 group_articles(articles, slug)

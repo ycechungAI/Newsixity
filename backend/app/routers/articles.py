@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 from app.db.repository import (
     get_article_by_id,
+    get_articles_by_ids,
     delete_article_by_id,
     mark_article_read,
     mark_article_unread,
+    mark_articles_read,
     toggle_article_saved,
     get_articles_by_category,
     mark_all_read_by_category,
@@ -16,7 +18,12 @@ from app.db.repository import (
     get_prunable_articles,
     prune_articles,
 )
-from app.schemas import Article, ManualArticleRequestBody, ArticlesMarkAllReadRequestBody
+from app.schemas import (
+    Article,
+    ManualArticleRequestBody,
+    ArticlesMarkAllReadRequestBody,
+    ArticlesBulkMarkReadRequestBody,
+)
 
 router = APIRouter()
 
@@ -89,6 +96,31 @@ async def update_article(article_id: int, body: dict) -> dict:
 
     article = get_article_by_id(article_id)
     return {"success": True, "categorySlug": article.category_slug if article else None}
+
+
+@router.patch(
+    "/articles",
+    dependencies=[Depends(rate_limit("articles-bulk-patch", 60, TEN_MIN_MS))],
+)
+async def bulk_mark_articles_read(body: ArticlesBulkMarkReadRequestBody) -> dict:
+    """Mark multiple articles as read in a single batched call.
+
+    Used by ArticleCard's scroll-into-view auto-read tracking, which queues
+    ids client-side instead of firing one PATCH per card.
+    """
+    if not body.articleIds:
+        raise HTTPException(status_code=400, detail="articleIds must not be empty")
+
+    articles_before = get_articles_by_ids(body.articleIds)
+    mark_articles_read(body.articleIds)
+
+    return {
+        "success": True,
+        "updated": [
+            {"id": article.id, "categorySlug": article.category_slug}
+            for article in articles_before
+        ],
+    }
 
 
 @router.delete(

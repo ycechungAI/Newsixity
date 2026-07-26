@@ -108,3 +108,32 @@ export class OllamaModelNotFoundError extends Error {
     this.name = "OllamaModelNotFoundError";
   }
 }
+
+export interface Podcast {
+  id: number;
+  title: string;
+  feedUrl: string;
+  siteUrl: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  author: string | null;
+  isFavorite: boolean;
+  lastFetchedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface PodcastEpisode {
+  id: number;
+  podcastId: number;
+  guid: string;
+  title: string;
+  audioUrl: string;
+  durationSeconds: number | null;
+  publishedAt: string | null;
+  description: string | null;
+  isFavorite: boolean;
+  progressSeconds: number;
+  isPlayed: boolean;
+  createdAt: string;
+}

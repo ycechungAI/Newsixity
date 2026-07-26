@@ -38,7 +38,10 @@ fi
 
 echo "🧊 Freezing backend with PyInstaller..."
 cd backend
-"$PYINSTALLER" newsixity-backend.spec
+# --noconfirm: PyInstaller refuses to write into a non-empty dist/ dir by
+# default, which breaks every rebuild after the first. Safe here since
+# dist/newsixity-backend only ever holds this script's own prior output.
+"$PYINSTALLER" --noconfirm newsixity-backend.spec
 echo "✓ Backend frozen to dist/newsixity-backend/"
 cd ..
 echo ""

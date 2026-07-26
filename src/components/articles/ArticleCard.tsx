@@ -7,6 +7,7 @@ import { timeAgo } from "@/lib/utils/date";
 import { truncate, stripHtml } from "@/lib/utils/sanitize";
 import { isVideoUrl } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
+import { enqueueMarkRead } from "@/lib/articles/markReadQueue";
 import VideoEmbed from "./VideoEmbed";
 
 interface ArticleCardProps {
@@ -43,23 +44,15 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     let timer: ReturnType<typeof setTimeout> | null = null;
     const obs = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) {
-        timer = setTimeout(async () => {
+        timer = setTimeout(() => {
           if (markedRef.current) return;
           markedRef.current = true;
-          try {
-            const res = await fetch(`/api/articles/${articleId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ is_read: true }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              setIsRead(true);
-              window.dispatchEvent(new CustomEvent("article-read", {
-                detail: { articleId, categorySlug: data.categorySlug },
-              }));
-            }
-          } catch { markedRef.current = false }
+          enqueueMarkRead(articleId).then((categorySlug) => {
+            setIsRead(true);
+            window.dispatchEvent(new CustomEvent("article-read", {
+              detail: { articleId, categorySlug },
+            }));
+          });
           obs.disconnect();
         }, 1000);
       } else {

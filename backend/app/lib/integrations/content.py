@@ -62,11 +62,13 @@ def resolves_to_blocked_ip(hostname: str) -> bool:
     if normalized in BLOCKED_HOSTNAMES:
         return True
 
-    # Check if it's already an IP
+    # If it's already an IP literal, check it directly rather than resolving.
     try:
-        return is_blocked_ip(normalized)
-    except Exception:
+        ip_address(normalized)
+    except ValueError:
         pass
+    else:
+        return is_blocked_ip(normalized)
 
     # Try DNS resolution
     try:

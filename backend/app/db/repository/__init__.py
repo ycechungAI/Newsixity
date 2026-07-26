@@ -12,6 +12,7 @@ from app.db.repository.categories import (
 from app.db.repository.articles import (
     get_articles_by_category,
     get_article_by_id,
+    get_articles_by_ids,
     get_article_by_title_hash,
     get_saved_articles,
     get_saved_article_count,
@@ -21,6 +22,7 @@ from app.db.repository.articles import (
     update_article_content,
     mark_article_read,
     mark_article_unread,
+    mark_articles_read,
     mark_all_read_by_category,
     toggle_article_saved,
     get_unsummarized_articles,
@@ -139,6 +141,7 @@ __all__ = [
     # articles
     "get_articles_by_category",
     "get_article_by_id",
+    "get_articles_by_ids",
     "get_article_by_title_hash",
     "get_saved_articles",
     "get_saved_article_count",
@@ -148,6 +151,7 @@ __all__ = [
     "update_article_content",
     "mark_article_read",
     "mark_article_unread",
+    "mark_articles_read",
     "mark_all_read_by_category",
     "toggle_article_saved",
     "get_unsummarized_articles",

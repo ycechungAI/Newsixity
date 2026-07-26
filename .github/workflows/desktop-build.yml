@@ -65,5 +65,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: newsixity-${{ matrix.name }}
-          path: src-tauri/target/release/bundle/
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
           if-no-files-found: warn
