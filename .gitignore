@@ -62,3 +62,6 @@ database.sqlite
 
 # claude code
 .claude/
+
+# Built desktop artifacts, kept for installing (see build-desktop-mac.sh)
+/install_file/

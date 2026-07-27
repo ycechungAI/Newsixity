@@ -142,6 +142,21 @@ class SPAStaticFiles(StaticFiles):
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
+
+            # An unmatched /api/* path is a missing endpoint, never a client
+            # route — so answer as an API, not with the SPA shell.
+            #
+            # This mattered more than it looks. Falling through here returned
+            # index.html with status 200, so a frontend calling a route that
+            # did not exist saw res.ok === true and only failed later on
+            # res.json(), usually inside a catch that swallowed it. The
+            # feature then rendered empty with nothing in any log. Four
+            # separate features shipped broken exactly that way in v0.3
+            # (playlists, article search, feed weights, ollama health).
+            # A JSON 404 makes the same mistake fail loudly and immediately.
+            if path.startswith("api/") or path == "api":
+                return JSONResponse({"error": "Not found"}, status_code=404)
+
             return await super().get_response("index.html", scope)
 
 

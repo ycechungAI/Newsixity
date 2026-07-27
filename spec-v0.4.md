@@ -70,7 +70,79 @@ Related smaller wins while in here:
 - **Rebuild the desktop app** after any backend change:
   `./build-desktop-mac.sh`. The frozen sidecar does not pick up source edits.
 
-## 4. The bug class to keep testing for
+## 4. Build, size, and environment — measured, don't re-derive
+
+### Where the app's size actually is
+
+Measured on the v0.3 macOS build (143 MB total):
+
+| Part | Size |
+|---|---|
+| Python sidecar (`_internal`) | 119 MB |
+| — babel locale-data | 31 MB → **trimmed to ~1 MB** |
+| — pandas (via yfinance) | 17 MB |
+| — cryptography | 11 MB |
+| — lxml (via trafilatura) | 8.6 MB |
+| — numpy (via yfinance) | 6.6 MB |
+| Tauri binary | 3.9 MB |
+| **Frontend `dist/`** | **372 KB** |
+
+**`node_modules` (131 MB) ships nothing.** It is a build-time cost only; the
+packaged app contains `dist/` plus the frozen Python. Trimming npm packages
+does not shrink the app — don't spend effort there for size reasons. The
+frontend is already 0.3% of the bundle.
+
+The heavy Python packages are transitive, not chosen:
+`yfinance → pandas, numpy, curl_cffi` and
+`trafilatura → lxml, courlan → babel`. Removing them means dropping the
+finance or content-extraction features, so weigh it as a feature decision.
+
+**babel is already trimmed** in `newsixity-backend.spec`
+(`_trim_babel_locales`): courlan imports `Locale` only to score language
+codes in URL segments, which requires a `target_language` we never pass, and
+it already catches `UnknownLocaleError`. Keep `root/en/en_US/en_GB`. Revisit
+if language-aware extraction is enabled.
+
+### Build script behaviour
+
+- `./build-desktop-mac.sh` (or `npm run build:mac`) is the only entry point.
+- Tauri rebuilds `Newsixity.app` **in place**, so an un-installed build is
+  silently replaced by the next one. The script now keeps a timestamped copy
+  in `dist-desktop/` (last 3 retained, gitignored).
+- It **verifies** the bundle after building — binary present, Python resource
+  present — rather than trusting the build's own success summary, which
+  prints a DMG path even when only a scratch image was produced.
+- The DMG step can leave `bundle/macos/rw.*.dmg` scratch images (~180 MB
+  each) that nothing cleans up; the script removes them before and after.
+  If `dmg/` has no final `.dmg`, the `.app` is still complete and installable.
+
+### The venv trap
+
+`start.sh` used to delete and rebuild `.venv` on **every** run: the staleness
+check parsed the recorded path with `cut -d'"' -f2`, but `python3 -m venv`
+writes `VIRTUAL_ENV=/path` unquoted, and `cut` on a line with no quote
+returns the whole line. Fixed — but note the knock-on: a `.venv` rebuild
+drops **pyinstaller** unless the `desktop` extra is installed, and then
+`build-desktop-mac.sh` fails with "pyinstaller not found in .venv".
+`start.sh` now installs `.[dev,integrations,desktop]`. If a desktop build
+ever fails that way again, this is why:
+
+```bash
+.venv/bin/pip install -e "backend/.[dev,integrations,desktop]"
+```
+
+### Dead weight removed in v0.3
+
+- Root `tests/` — the old Next.js TypeScript suite. Unrunnable (no test
+  runner configured, imported three deleted modules and `better-sqlite3`,
+  which was never a dependency) and fully superseded by `backend/tests/`.
+  Verified 1:1 before deleting; `test_schema.py` covers everything
+  `crud.test.ts` did. Removing it took `tsc` from 20 errors to 3.
+- `tsc` is now at **0 errors** — keep it there, it was hiding a real one
+  (`below_threshold` missing from `PrunePreview`, a field the API does
+  return).
+
+## 5. The bug class to keep testing for
 
 Five bugs in v0.3 were all the same shape: **a feature wired on one side and
 silently doing nothing on the other.** None of them threw an error, and every
@@ -84,9 +156,17 @@ unit test passed.
   `index.html` at status 200 and rendered empty.
 - `GET /api/ollama/health` did not exist either.
 
-The reason these hide: **a missing API route returns 200 with the SPA's HTML**
-via the static catch-all, so `res.ok` is true and only the JSON parse fails —
-usually inside a `catch` that swallows it.
+The reason these hid: a missing API route returned 200 with the SPA's HTML
+via the static catch-all, so `res.ok` was true and only the JSON parse failed
+— usually inside a `catch` that swallowed it.
+
+**This is now fixed at the root.** `SPAStaticFiles.get_response` in
+`app/main.py` returns a JSON 404 for unmatched `/api/*` instead of falling
+through to `index.html`. Client-side routes (`/finance`, `/article/123`, …)
+still get the SPA. Pinned by `TestUnknownApiPathsFailLoudly` in
+`tests/integration/test_static_routes.py` — **do not "restore" the fallback
+for /api paths**, it is the single change that makes this whole class fail
+loudly.
 
 `backend/tests/integration/test_api_contract.py` now scans the frontend for
 `fetch("/api/…")` calls and asserts each one exists with the right method. It

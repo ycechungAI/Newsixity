@@ -54,6 +54,35 @@ for pkg in ("trafilatura", "courlan", "justext", "yfinance"):
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
 
+
+def _trim_babel_locales(entries):
+    """Drop babel's full CLDR locale-data — ~31 MB, about a fifth of the app.
+
+    Babel arrives transitively: courlan imports Locale to score language
+    codes in URL segments, and that is the only use anywhere in the tree.
+    That path runs only when a target_language is supplied, and
+    lib/integrations/content.py calls trafilatura.extract(html) without one,
+    so it is never exercised here.
+
+    Keeping en/root means the common case still resolves, and courlan
+    already wraps the lookup in `except (TypeError, UnknownLocaleError)`
+    (courlan/filters.py:185) — so even an unexpected locale degrades to a
+    slightly different score rather than raising.
+
+    Revisit if language-aware extraction is ever turned on.
+    """
+    # Compared against the basename, not via endswith: "ken.dat" ends with
+    # "en.dat" and would otherwise be kept by accident.
+    keep = {"root.dat", "en.dat", "en_US.dat", "en_GB.dat"}
+    trimmed = []
+    for entry in entries:
+        dest = entry[0].replace("\\", "/")
+        if "babel/locale-data/" in dest and dest.rsplit("/", 1)[-1] not in keep:
+            continue
+        trimmed.append(entry)
+    return trimmed
+
+
 a = Analysis(
     ["run_server.py"],
     pathex=[],
@@ -71,6 +100,11 @@ a = Analysis(
     ],
     noarchive=False,
 )
+
+# Must run here, not on `datas` above: PyInstaller ships a hook for babel that
+# injects locale-data during Analysis, so anything filtered beforehand is
+# simply re-added. a.datas is the resolved, final list.
+a.datas = _trim_babel_locales(a.datas)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
