@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 function isSystemMessage(text: string): boolean {
   // \x1b, not \033: octal escapes are a syntax error under TypeScript's
@@ -153,18 +154,18 @@ export default function ConsolePage() {
   }
 
   async function handleRemove(id: number) {
-    if (!confirm("Remove this article from the summarization queue?")) return;
+    if (!await confirmDialog("Remove this article from the summarization queue?")) return;
     try {
       const res = await fetch(`/api/console/queue?id=${id}`, { method: "DELETE" });
       if (res.ok) {
         setQueue(q => q.filter(item => item.id !== id));
         setQueueCount(c => Math.max(0, c - 1));
       }
-    } catch { alert("Failed to remove from queue."); }
+    } catch { void notify("Failed to remove from queue."); }
   }
 
   async function handleResummarize() {
-    if (!confirm("This will reset all failed and skipped articles and put them back in the summarization queue. Continue?")) return;
+    if (!await confirmDialog("This will reset all failed and skipped articles and put them back in the summarization queue. Continue?")) return;
     setResummarizing(true);
     try {
       // Step 1: Reset failed and skipped articles
@@ -187,24 +188,24 @@ export default function ConsolePage() {
       }
       const sumData = await sumRes.json();
 
-      alert(`Resummarization complete!\n${resetData.message}\nSummarized: ${sumData.summarized}\nErrors: ${sumData.errors.length}`);
+      void notify(`Resummarization complete!\n${resetData.message}\nSummarized: ${sumData.summarized}\nErrors: ${sumData.errors.length}`);
       // Refresh console data to see updated queue count and logs
       await loadData();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      alert(`Failed to trigger resummrization: ${message}`);
+      void notify(`Failed to trigger resummrization: ${message}`);
     } finally {
       setResummarizing(false);
     }
   }
 
   async function stopServers() {
-    if (!confirm("Stop Ollama and dev servers?")) return;
+    if (!await confirmDialog("Stop Ollama and dev servers?")) return;
     setStopping(true);
     try {
       await fetch("/api/console/stop", { method: "POST" });
-      alert("Servers stopped.");
-    } catch { alert("Failed to stop servers."); }
+      void notify("Servers stopped.");
+    } catch { void notify("Failed to stop servers."); }
     finally { setStopping(false); }
   }
 
@@ -213,9 +214,9 @@ export default function ConsolePage() {
     try {
       const res = await fetch("/api/console/backup", { method: "POST" });
       const data = await res.json();
-      if (res.ok) alert(`Backup created!\n${data.path}\n${data.size}`);
-      else alert(`Backup failed: ${data.error}`);
-    } catch { alert("Failed to backup database."); }
+      if (res.ok) void notify(`Backup created!\n${data.path}\n${data.size}`);
+      else void notify(`Backup failed: ${data.error}`);
+    } catch { void notify("Failed to backup database."); }
     finally { setBacking(false); }
   }
 
@@ -248,15 +249,15 @@ export default function ConsolePage() {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message ?? "Restore staged — quit and reopen Newsixity to apply.");
+        void notify(data.message ?? "Restore staged — quit and reopen Newsixity to apply.");
         setPendingImport(null);
         setPendingRestore(null);
         loadBackups();
       } else {
         // The integrity gate rejects here — surface exactly why.
-        alert(`Restore rejected: ${data.error ?? res.status}`);
+        void notify(`Restore rejected: ${data.error ?? res.status}`);
       }
-    } catch { alert("Failed to stage restore."); }
+    } catch { void notify("Failed to stage restore."); }
     finally { setImporting(false); }
   }
 
@@ -272,29 +273,28 @@ export default function ConsolePage() {
    * silently "downloading" the error. The filename comes from the server's
    * Content-Disposition header.
    */
+  /**
+   * Export the database to a file on disk.
+   *
+   * Writes server-side rather than downloading a blob. A blob +
+   * `<a download>` is silently a no-op in the packaged app's WKWebView, so
+   * the button appeared to do nothing once installed — and there is no
+   * reliable way to detect that failure from the page. The backend and the
+   * filesystem are the same machine for this app, so writing directly is
+   * both simpler and works everywhere.
+   */
   async function exportDatabase() {
     setExporting(true);
     try {
-      const res = await fetch("/api/console/backups/export");
+      const res = await fetch("/api/console/backups/export-to-disk", { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(`Export failed: ${data.error ?? res.status}`);
+        void notify(`Export failed: ${data.error ?? res.status}`);
         return;
       }
-      const disposition = res.headers.get("content-disposition") ?? "";
-      const match = disposition.match(/filename="?([^";]+)"?/);
-      const filename = match ? match[1] : "newsixity-export.db";
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch { alert("Failed to export database."); }
+      const info = await res.json().catch(() => ({}));
+      void notify(info.message ?? "Database exported.");
+    } catch { void notify("Failed to export database."); }
     finally { setExporting(false); }
   }
 
@@ -306,9 +306,9 @@ export default function ConsolePage() {
         const data = await res.json();
         setPrunePreview(data);
       } else {
-        alert("Failed to load pruning preview.");
+        void notify("Failed to load pruning preview.");
       }
-    } catch { alert("Failed to load pruning preview."); }
+    } catch { void notify("Failed to load pruning preview."); }
     finally { setPruneLoading(false); }
   }
 
@@ -332,15 +332,15 @@ export default function ConsolePage() {
       const res = await fetch(`/api/prune?threshold=${scoreThreshold}`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
-        alert(`Pruning complete!\nDeleted: ${data.deleted} articles\n\nThe page will refresh to show updated counts.`);
+        void notify(`Pruning complete!\nDeleted: ${data.deleted} articles\n\nThe page will refresh to show updated counts.`);
         setShowPruneConfirm(false);
         setPrunePreview(null);
         // Reload page to refresh article counts
         setTimeout(() => window.location.reload(), 1000);
       } else {
-        alert("Failed to execute pruning.");
+        void notify("Failed to execute pruning.");
       }
-    } catch { alert("Failed to execute pruning."); }
+    } catch { void notify("Failed to execute pruning."); }
     finally { setPruning(false); }
   }
 

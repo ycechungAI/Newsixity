@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ResearchSource } from "@/types";
+import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 interface ResearchHistory {
   id: number;
@@ -47,7 +48,7 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
   }, [loadHistory]);
 
   const handleDeleteHistory = async (researchId: number) => {
-    if (!confirm("Delete this research? This action cannot be undone.")) {
+    if (!await confirmDialog("Delete this research? This action cannot be undone.")) {
       return;
     }
 
@@ -60,11 +61,11 @@ export default function DeepResearch({ articleId, articleTitle }: DeepResearchPr
         // Remove from local state
         setHistory((prev) => prev.filter((item) => item.id !== researchId));
       } else {
-        alert("Failed to delete research. Please try again.");
+        void notify("Failed to delete research. Please try again.");
       }
     } catch (e) {
       console.error("Failed to delete research:", e);
-      alert("Network error. Please try again.");
+      void notify("Network error. Please try again.");
     }
   };
 

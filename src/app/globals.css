@@ -2614,3 +2614,62 @@ select {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ── In-app dialogs ───────────────────────────────────────────────────────
+   Replaces window.confirm/alert, which are inert in the packaged app's
+   WKWebView. See src/lib/ui/dialog.ts. */
+.app-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+.app-dialog {
+  background: var(--card-bg, #0b1016);
+  border: 1px solid var(--border, #1a2a4a);
+  border-radius: 8px;
+  padding: 16px 18px 12px;
+  max-width: 460px;
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.app-dialog-text {
+  color: var(--text, #e2e8f0);
+  font-size: 13px;
+  line-height: 1.5;
+  /* Server messages can contain newlines; keep them. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 14px;
+}
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.app-dialog-btn {
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  border: 1px solid var(--border, #1a2a4a);
+  border-radius: 5px;
+  font-size: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.app-dialog-btn:hover { color: var(--text, #e2e8f0); }
+.app-dialog-btn.is-primary { color: #60a5fa; border-color: #1e3a5f; }
+.app-dialog-btn.is-primary:hover { background: #0a1628; }
+.app-dialog-btn.is-danger { color: #f87171; border-color: #4a1a1a; }
+.app-dialog-btn.is-danger:hover { background: #2a0a0a; }
+
+/* The floating player's title bar doubles as its drag handle. */
+.video-host.is-floating .video-host-bar {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.video-host.is-floating .video-host-bar button { cursor: pointer; }

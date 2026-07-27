@@ -9,6 +9,7 @@ import { isVideoUrl } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import { enqueueMarkRead } from "@/lib/articles/markReadQueue";
 import VideoEmbed from "./VideoEmbed";
+import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 interface ArticleCardProps {
   article: Article | undefined;
@@ -104,7 +105,7 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     e.stopPropagation();
     if (!articleId) return;
     
-    if (window.confirm("Are you sure you want to completely delete this article?")) {
+    if (await confirmDialog("Are you sure you want to completely delete this article?")) {
       try {
         const res = await fetch(`/api/articles/${articleId}`, {
           method: "DELETE",
@@ -123,10 +124,10 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
           // be indistinguishable from a successful one, so the only symptom
           // was a button that appeared to do nothing.
           const data = await res.json().catch(() => ({}));
-          window.alert(`Could not delete this article: ${data.error ?? data.detail ?? res.status}`);
+          void notify(`Could not delete this article: ${data.error ?? data.detail ?? res.status}`);
         }
       } catch {
-        window.alert("Could not delete this article — the app could not reach the server.");
+        void notify("Could not delete this article — the app could not reach the server.");
       }
     }
   }, [articleId]);

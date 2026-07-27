@@ -9,6 +9,7 @@ import StockChart from "./StockChart";
 import MarketIndices from "./MarketIndices";
 import MarketHeatmap from "./MarketHeatmap";
 import { DEFAULT_STOCKS } from "@/lib/finance/constants";
+import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 export default function FinanceDashboard() {
   const [watchlist, setWatchlist] = useState<WatchlistItemWithQuote[]>([]);
@@ -52,18 +53,18 @@ export default function FinanceDashboard() {
       await addToWatchlist(stock.symbol, stock.name, stock.exchange);
       await loadWatchlist();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to add stock");
+      void notify(e instanceof Error ? e.message : "Failed to add stock");
       setWatchlist(prev => prev.filter(item => item.symbol !== stock.symbol));
     }
   }
 
   async function handleRemoveStock(id: number) {
-    if (!confirm("Remove this stock from your watchlist?")) return;
+    if (!await confirmDialog("Remove this stock from your watchlist?")) return;
     try {
       await removeFromWatchlist(id);
       setWatchlist(prev => prev.filter(item => item.id !== id));
     } catch {
-      alert("Failed to remove stock");
+      void notify("Failed to remove stock");
     }
   }
 
