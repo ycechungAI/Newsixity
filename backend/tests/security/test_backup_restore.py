@@ -8,6 +8,7 @@ pytest tmp_path so nothing here can touch the real repo data/ directory.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings as app_settings
 from app.lib.backup.restore import (
+    AUTO_PREFIX,
     KNOWN_SCHEMA_OBJECTS,
     BackupValidationError,
     _validate_sqlite_file,
@@ -495,3 +497,80 @@ class TestSchemaObjectAllowlist:
             _validate_sqlite_file(path)
 
         assert "evil_trigger" in caplog.text
+
+
+class TestBackupRetention:
+    """Manual and automatic backups are pruned by two separate functions
+    (routers/console.py and lib/scheduler/backup.py), each keeping
+    MAX_BACKUPS. Neither had a test, so the interaction between them —
+    which is where the prefix bug lived — was unverified."""
+
+    def _make(self, backups_dir, name):
+        path = backups_dir / name
+        _make_valid_db(path)
+        return path
+
+    def test_manual_backup_prune_keeps_only_max_backups(self, db_env):
+        from app.routers.console import MAX_BACKUPS, _cleanup_old_backups
+
+        backups = db_env.parent / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        made = []
+        for i in range(5):
+            p = self._make(backups, f"newsixity-2024-01-0{i}T00-00-00.db")
+            os.utime(p, (1700000000 + i * 60, 1700000000 + i * 60))
+            made.append(p)
+
+        _cleanup_old_backups(backups, "newsixity-", exclude_prefix=AUTO_PREFIX)
+
+        remaining = sorted(p.name for p in backups.glob("newsixity-*.db"))
+        assert len(remaining) == MAX_BACKUPS, remaining
+        # The newest survive, not an arbitrary two.
+        assert remaining == sorted(p.name for p in made[-MAX_BACKUPS:])
+
+    def test_manual_prune_never_deletes_auto_backups(self, db_env):
+        """The original bug: "newsixity-" also matches "newsixity-auto-"."""
+        from app.routers.console import _cleanup_old_backups
+
+        backups = db_env.parent / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        for i in range(4):
+            self._make(backups, f"newsixity-2024-01-0{i}T00-00-00.db")
+        autos = [self._make(backups, f"newsixity-auto-2024-01-0{i}T00-00-00.db")
+                 for i in range(3)]
+
+        _cleanup_old_backups(backups, "newsixity-", exclude_prefix=AUTO_PREFIX)
+
+        for a in autos:
+            assert a.is_file(), f"manual prune deleted an automatic backup: {a.name}"
+
+    def test_manual_prune_never_deletes_the_pre_restore_safety_copy(self, db_env):
+        """The safety copy is the only way to undo a restore."""
+        from app.routers.console import _cleanup_old_backups
+
+        backups = db_env.parent / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        for i in range(4):
+            self._make(backups, f"newsixity-2024-01-0{i}T00-00-00.db")
+        safety = self._make(backups, "pre-restore-2024-01-01T00-00-00.db")
+
+        _cleanup_old_backups(backups, "newsixity-", exclude_prefix=AUTO_PREFIX)
+
+        assert safety.is_file(), "prune deleted the pre-restore safety copy"
+
+    def test_auto_backup_prune_keeps_only_max_backups(self, db_env):
+        from app.lib.scheduler.backup import (
+            AUTO_PREFIX as SCHED_AUTO,
+            MAX_BACKUPS as SCHED_MAX,
+            _cleanup_old_backups as sched_cleanup,
+        )
+
+        backups = db_env.parent / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        for i in range(5):
+            p = self._make(backups, f"{SCHED_AUTO}2024-01-0{i}T00-00-00.db")
+            os.utime(p, (1700000000 + i * 60, 1700000000 + i * 60))
+
+        sched_cleanup(backups, SCHED_AUTO)
+
+        assert len(list(backups.glob(f"{SCHED_AUTO}*.db"))) == SCHED_MAX

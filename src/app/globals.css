@@ -2597,3 +2597,20 @@ select {
   padding: 14px 0;
   text-align: center;
 }
+
+/* "Open on YouTube" escape hatch in the size bar — embeds suppress most
+   YouTube controls, and some videos refuse to embed at all. */
+.video-size-link {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.video-size-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

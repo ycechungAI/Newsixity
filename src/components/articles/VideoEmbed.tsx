@@ -47,6 +47,23 @@ export default function VideoEmbed({
 
   const isAnimex = videoInfo?.type === "animex";
   const isDirect = videoInfo?.type === "direct";
+
+  /**
+   * Canonical YouTube page for whatever is loaded right now.
+   *
+   * Tracks the playlist selection rather than the article's original URL, so
+   * "open on YouTube" opens the video actually on screen. Falls back to the
+   * playlist itself when no individual video has been picked yet.
+   */
+  const watchUrl =
+    videoInfo?.type !== "youtube"
+      ? null
+      : activeVideoId
+        ? `https://www.youtube.com/watch?v=${activeVideoId}` +
+          (videoInfo.playlistId ? `&list=${videoInfo.playlistId}` : "")
+        : videoInfo.playlistId
+          ? `https://www.youtube.com/playlist?list=${videoInfo.playlistId}`
+          : null;
   // Animex is a plain link-out, so it never takes over the shared player.
   const useShared = shared && !!videoInfo && !isAnimex;
 
@@ -116,6 +133,22 @@ export default function VideoEmbed({
               onPointerDown={startResize}
               title="Drag to resize"
             />
+            {/* Embeds run with most YouTube controls suppressed, and some
+                videos refuse to embed at all (owner-disabled, age-gated, or
+                region-locked) — which shows as a player that never starts.
+                This is the escape hatch: same video, full controls, and it
+                works even when the embed cannot. */}
+            {watchUrl && (
+              <a
+                className="video-size-link"
+                href={watchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open on YouTube with full controls"
+              >
+                ↗ YouTube
+              </a>
+            )}
           </div>
         </>
       ) : (
