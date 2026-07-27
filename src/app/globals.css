@@ -2673,3 +2673,26 @@ select {
   touch-action: none;
 }
 .video-host.is-floating .video-host-bar button { cursor: pointer; }
+
+/* Autoplay-next toggle in the playlist header. */
+.vid-playlist-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.vid-autoplay-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.vid-autoplay-btn:hover { color: var(--text); }
+.vid-autoplay-btn.active {
+  color: #4ade80;
+  border-color: #1e4a2a;
+}

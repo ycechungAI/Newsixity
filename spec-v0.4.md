@@ -102,6 +102,12 @@ Watch for:
 
 ## 4. Carry-overs from v0.3
 
+- **react-router 6 -> 7 upgrade.** Two moderate advisories (open redirect via
+  backslash in `<Link>`; constructor injection in `deserializeErrors()`)
+  affect `react-router` 6.0.0-7.17.0 and are only fixed in 7.18+, which is a
+  major migration. Neither is reachable in this app — there is no SSR, and
+  link targets are the app's own routes — so `audit:prod` fails CI on
+  high/critical only. Do the upgrade deliberately, not via `npm audit fix`.
 - **Topics view has no per-article controls.** ArticleGroup renders only an
   expand button — no delete, save, or mark-read — while Cards/List/Sources/
   Timeline all use ArticleCard and have the full set. Topics is the default

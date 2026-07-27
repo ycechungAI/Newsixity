@@ -8,7 +8,8 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "build:mac": "./build-desktop-mac.sh",
-    "clean": "./clean.sh"
+    "clean": "./clean.sh",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
     "react": "^19.2.7",

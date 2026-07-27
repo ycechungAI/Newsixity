@@ -216,6 +216,24 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
         const data = JSON.parse(event.data);
         const t = data?.info?.currentTime;
         if (typeof t === "number") currentTimeRef.current = t;
+
+        // Player state 0 is ENDED. It arrives either as the state itself
+        // (onStateChange) or nested in the periodic infoDelivery payload,
+        // depending on the embed — accept both.
+        const state =
+          typeof data?.info?.playerState === "number"
+            ? data.info.playerState
+            : data?.event === "onStateChange" && typeof data.info === "number"
+              ? data.info
+              : null;
+
+        if (state === 0) {
+          // Announce rather than advance here: the host owns playback, but
+          // only the page knows what "next" means. VideoEmbed decides.
+          window.dispatchEvent(
+            new CustomEvent("video-ended", { detail: { key: active.key } })
+          );
+        }
       } catch {
         // Non-JSON chatter from the embed; ignore.
       }
@@ -385,6 +403,13 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
                 title={active.title}
                 controls
                 className="video-host-media"
+                // Direct files report the end natively; the iframe path gets
+                // the same signal from YouTube's postMessage playerState.
+                onEnded={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("video-ended", { detail: { key: active.key } })
+                  )
+                }
               />
             ) : (
               <iframe
