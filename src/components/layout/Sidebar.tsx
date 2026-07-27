@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { useTheme } from "@/components/ThemeProvider";
+import { useTheme } from "@/lib/theme/themeContext";
 import type { Category } from "@/types";
 
 interface SidebarProps {

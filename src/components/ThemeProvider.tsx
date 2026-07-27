@@ -1,22 +1,8 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 
-type Theme = "light" | "dark";
-
-interface ThemeContextType {
-  theme: Theme;
-  toggleTheme: () => void;
-}
-
-const ThemeContext = createContext<ThemeContextType>({
-  theme: "light",
-  toggleTheme: () => {},
-});
-
-export function useTheme() {
-  return useContext(ThemeContext);
-}
+import { ThemeContext, type Theme } from "@/lib/theme/themeContext";
 
 export default function ThemeProvider({
   children,
