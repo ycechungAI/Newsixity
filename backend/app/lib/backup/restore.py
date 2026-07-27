@@ -53,6 +53,14 @@ SAFETY_PREFIX = "pre-restore-"
 # Tables that must exist for a file to be considered a genuine Newsixity DB.
 CORE_TABLES = ("articles", "categories", "feeds", "settings")
 
+# Triggers/views Newsixity creates itself, so a normal backup does not get
+# flagged. Without this every legitimate restore logs an "unexpected
+# triggers" warning (init_db.init_fts5_search adds all three), which trains
+# the reader to ignore the one message meant to flag a hostile file.
+KNOWN_SCHEMA_OBJECTS = frozenset(
+    {"articles_fts_ai", "articles_fts_ad", "articles_fts_au"}
+)
+
 
 class BackupValidationError(Exception):
     """A candidate backup file failed the size/header/integrity/schema gate."""
@@ -155,7 +163,11 @@ def _validate_sqlite_file(path: Path) -> None:
                 "Not a Newsixity database (missing tables: " + ", ".join(missing) + ")"
             )
 
-        unexpected = [f"{kind}:{name}" for name, kind in schema_rows if kind in ("view", "trigger")]
+        unexpected = [
+            f"{kind}:{name}"
+            for name, kind in schema_rows
+            if kind in ("view", "trigger") and name not in KNOWN_SCHEMA_OBJECTS
+        ]
         if unexpected:
             logger.warning(
                 "[Newsixity] Restore candidate %s has unexpected triggers/views: %s",
@@ -327,8 +339,13 @@ def apply_pending_restore() -> None:
                 sidecar = Path(str(base) + suffix)
                 try:
                     sidecar.unlink(missing_ok=True)
-                except Exception:  # noqa: BLE001
-                    pass
+                except OSError as e:
+                    # Not fatal — a leftover sidecar next to the restored file
+                    # is recoverable, and refusing to start over it would be
+                    # worse. Log it so an unwritable data dir is still visible.
+                    logger.warning(
+                        "[Newsixity] Could not remove stale sidecar %s: %s", sidecar, e
+                    )
 
         shutil.move(str(pending_path), str(db_path))
         logger.info("[Newsixity] Restore applied successfully: %s", db_path)

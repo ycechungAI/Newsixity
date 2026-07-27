@@ -68,6 +68,15 @@ interface LogEntry {
   message: string;
 }
 
+interface BackupItem {
+  name: string;
+  size: number;
+  /** Unix seconds. */
+  mtime: number;
+  /** "auto" | "manual" | "safety" — safety copies are made before a restore. */
+  type: string;
+}
+
 interface PrunePreview {
   total_articles: number;
   saved_count: number;
@@ -88,6 +97,12 @@ export default function ConsolePage() {
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
   const [exporting, setExporting]   = useState(false);
+  const [importing, setImporting]   = useState(false);
+  const [pendingImport, setPendingImport] = useState<File | null>(null);
+  const [backups, setBackups]       = useState<BackupItem[]>([]);
+  const [backupsLoading, setBackupsLoading] = useState(false);
+  /** Name of the backup awaiting a confirm click, if any. */
+  const [pendingRestore, setPendingRestore] = useState<string | null>(null);
   const [resummarizing, setResummarizing] = useState(false);
   const [pruning, setPruning]       = useState(false);
   const [prunePreview, setPrunePreview] = useState<PrunePreview | null>(null);
@@ -96,6 +111,7 @@ export default function ConsolePage() {
   const [scoreThreshold, setScoreThreshold] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
   const [logTab, setLogTab] = useState<"system" | "console">("system");
+  const importInputRef = useRef<HTMLInputElement>(null);
   const logsRef = useRef<HTMLDivElement>(null);
   const pruneLoadingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -104,6 +120,9 @@ export default function ConsolePage() {
     const t = setInterval(loadData, 500);  // Update every 500ms for real-time display
     return () => clearInterval(t);
   }, []);
+
+  // Backups change rarely, so load once rather than joining the 500ms poll.
+  useEffect(() => { loadBackups(); }, []);
 
   useEffect(() => {
     if (autoScroll && logsRef.current)
@@ -189,6 +208,51 @@ export default function ConsolePage() {
       else alert(`Backup failed: ${data.error}`);
     } catch { alert("Failed to backup database."); }
     finally { setBacking(false); }
+  }
+
+  async function loadBackups() {
+    setBackupsLoading(true);
+    try {
+      const res = await fetch("/api/console/backups");
+      const data = await res.json();
+      setBackups(res.ok ? (data.backups ?? []) : []);
+    } catch { setBackups([]); }
+    finally { setBackupsLoading(false); }
+  }
+
+  /**
+   * Stage a restore. Either from a backup already on this machine (`name`) or
+   * from the file the user picked. Both run the same server-side integrity
+   * gate; nothing touches the live DB until the next app start.
+   */
+  async function stageRestore(opts: { name?: string; file?: File }) {
+    setImporting(true);
+    try {
+      const url = opts.name
+        ? `/api/console/backups/restore?name=${encodeURIComponent(opts.name)}`
+        : "/api/console/backups/restore";
+      const res = await fetch(url, {
+        method: "POST",
+        ...(opts.file
+          ? { body: opts.file, headers: { "Content-Type": "application/octet-stream" } }
+          : {}),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message ?? "Restore staged — quit and reopen Newsixity to apply.");
+        setPendingImport(null);
+        setPendingRestore(null);
+        loadBackups();
+      } else {
+        // The integrity gate rejects here — surface exactly why.
+        alert(`Restore rejected: ${data.error ?? res.status}`);
+      }
+    } catch { alert("Failed to stage restore."); }
+    finally { setImporting(false); }
+  }
+
+  async function importDatabase() {
+    if (pendingImport) await stageRestore({ file: pendingImport });
   }
 
   /**
@@ -361,6 +425,54 @@ export default function ConsolePage() {
                 </div>
               </div>
               <div className="con-backup-card">
+                <div className="con-backup-card-title">Import / Restore</div>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".db"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    // Reset first: picking the same file twice must still fire
+                    // onChange, and it won't if the input still holds it.
+                    e.target.value = "";
+                    if (file) setPendingImport(file);
+                  }}
+                />
+                {!pendingImport ? (
+                  <button
+                    className="con-btn con-btn-orange"
+                    onClick={() => importInputRef.current?.click()}
+                    disabled={importing}
+                    style={{ width: "100%", marginTop: 2 }}
+                  >
+                    ⬆ Import Database…
+                  </button>
+                ) : (
+                  <>
+                    <div className="con-backup-note" style={{ margin: "2px 0 4px" }}>
+                      Replace everything with <code>{pendingImport.name}</code>{" "}
+                      ({Math.round(pendingImport.size / 1024).toLocaleString()} KB)?
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button className="con-btn con-btn-red" onClick={importDatabase}
+                        disabled={importing} style={{ flex: 1 }}>
+                        {importing ? "Checking…" : "Confirm"}
+                      </button>
+                      <button className="con-btn" onClick={() => setPendingImport(null)}
+                        disabled={importing} style={{ flex: 1 }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+                <div className="con-backup-note">
+                  Checked for integrity before anything is replaced. Applied when
+                  you quit and reopen; your current DB is kept as{" "}
+                  <code>pre-restore-*.db</code>.
+                </div>
+              </div>
+              <div className="con-backup-card">
                 <div className="con-backup-card-title">Auto Backup</div>
                 <div className="con-backup-list">
                   ● Daily at 3 AM<br />
@@ -370,6 +482,55 @@ export default function ConsolePage() {
                 <div className="con-backup-note">Location: <code>data/backups/</code></div>
               </div>
             </div>
+
+            {/* Existing backups — selectable, so restoring doesn't require
+                knowing filenames or touching a terminal. */}
+            <div className="con-backup-list-head">
+              <span>Available backups {backups.length > 0 && `(${backups.length})`}</span>
+              <button className="con-btn" onClick={loadBackups} disabled={backupsLoading}>
+                {backupsLoading ? "…" : "↺"}
+              </button>
+            </div>
+            {backups.length === 0 ? (
+              <div className="con-backup-note" style={{ padding: "4px 0" }}>
+                {backupsLoading ? "Loading…" : "No backups yet — create one above."}
+              </div>
+            ) : (
+              <table className="con-backup-table">
+                <tbody>
+                  {backups.map((b) => (
+                    <tr key={b.name}>
+                      <td className="con-backup-name" title={b.name}>{b.name}</td>
+                      <td><span className={`con-badge con-badge-${b.type}`}>{b.type}</span></td>
+                      <td>{Math.round(b.size / 1024).toLocaleString()} KB</td>
+                      <td>{new Date(b.mtime * 1000).toLocaleString()}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <a
+                          className="con-btn"
+                          href={`/api/console/backups/download?name=${encodeURIComponent(b.name)}`}
+                          download
+                        >
+                          ⬇
+                        </a>{" "}
+                        {pendingRestore === b.name ? (
+                          <>
+                            <button className="con-btn con-btn-red" disabled={importing}
+                              onClick={() => stageRestore({ name: b.name })}>
+                              {importing ? "…" : "Confirm"}
+                            </button>{" "}
+                            <button className="con-btn" disabled={importing}
+                              onClick={() => setPendingRestore(null)}>Cancel</button>
+                          </>
+                        ) : (
+                          <button className="con-btn con-btn-orange"
+                            onClick={() => setPendingRestore(b.name)}>Restore</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
 
             <details className="con-details" style={{ marginTop: 6 }}>
               <summary>📖 Moving your database to another computer</summary>

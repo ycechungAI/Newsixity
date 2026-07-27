@@ -1582,6 +1582,63 @@ select {
 .con-btn-red:hover {
   background: #2a0a0a;
 }
+.con-btn-orange {
+  color: #fb923c;
+  border-color: #4a2a1a;
+}
+.con-btn-orange:hover {
+  background: #2a1505;
+}
+
+/* Backup list — existing backups, selectable for restore/download. */
+.con-backup-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #1a2a4a;
+  font-size: 11px;
+  color: #60a5fa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.con-backup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.con-backup-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #101820;
+  color: #94a3b8;
+  vertical-align: middle;
+}
+.con-backup-table tr:last-child td {
+  border-bottom: none;
+}
+/* Filenames are long and timestamped; clip rather than wrap the row. */
+.con-backup-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd5e1;
+  font-family: var(--font-mono, monospace);
+}
+.con-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.con-badge-auto { color: #64748b; }
+.con-badge-manual { color: #60a5fa; }
+/* Pre-restore snapshots: the undo path, so make them visually distinct. */
+.con-badge-safety { color: #fb923c; }
 
 .console-body {
   padding: 10px 12px;

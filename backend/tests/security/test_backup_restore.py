@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings as app_settings
 from app.lib.backup.restore import (
+    KNOWN_SCHEMA_OBJECTS,
     BackupValidationError,
     _validate_sqlite_file,
     apply_pending_restore,
@@ -456,3 +457,41 @@ class TestBackupRoutes:
         resp = client.post("/api/console/backups/restore")
         assert resp.status_code == 400
         assert "error" in resp.json()
+
+
+class TestSchemaObjectAllowlist:
+    """Newsixity's own FTS5 triggers must not be reported as suspicious.
+
+    A warning that fires on every legitimate restore is worse than no
+    warning: it trains the reader to ignore the one message that is supposed
+    to flag a hostile file's triggers/views.
+    """
+
+    def _db_with_triggers(self, path, names):
+        conn = sqlite3.connect(str(path))
+        conn.executescript(CORE_TABLES_SQL)
+        for n in names:
+            conn.execute(
+                f"CREATE TRIGGER {n} AFTER INSERT ON articles BEGIN "
+                f"UPDATE articles SET title=title WHERE id=new.id; END"
+            )
+        conn.commit()
+        conn.close()
+
+    def test_own_fts5_triggers_are_not_flagged(self, db_env, tmp_path, caplog):
+        path = tmp_path / "with_fts.db"
+        self._db_with_triggers(path, KNOWN_SCHEMA_OBJECTS)
+
+        with caplog.at_level("WARNING"):
+            _validate_sqlite_file(path)  # must not raise
+
+        assert "unexpected triggers" not in caplog.text.lower()
+
+    def test_foreign_triggers_are_still_flagged(self, db_env, tmp_path, caplog):
+        path = tmp_path / "with_foreign.db"
+        self._db_with_triggers(path, ["evil_trigger"])
+
+        with caplog.at_level("WARNING"):
+            _validate_sqlite_file(path)
+
+        assert "evil_trigger" in caplog.text

@@ -20,7 +20,13 @@ echo "🐍 Setting up Python virtual environment..."
 # every python/pip/uvicorn invocation breaks with "bad interpreter". Detect
 # that mismatch and rebuild .venv automatically instead of failing.
 if [ -d ".venv" ]; then
-    VENV_RECORDED_PATH="$(grep -m1 '^VIRTUAL_ENV=' .venv/bin/activate 2>/dev/null | cut -d'"' -f2)"
+    # Take everything after the first '=' and strip optional surrounding
+    # quotes. Do NOT split on '"': python3 -m venv writes this line unquoted
+    # (VIRTUAL_ENV=/path), and `cut -d'"' -f2` on a line containing no quote
+    # returns the whole line — including the "VIRTUAL_ENV=" prefix — which
+    # never matches, so .venv was deleted and rebuilt on every single run.
+    VENV_RECORDED_PATH="$(grep -m1 '^VIRTUAL_ENV=' .venv/bin/activate 2>/dev/null \
+        | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
     if [ "$VENV_RECORDED_PATH" != "$REPO_ROOT/.venv" ]; then
         echo "   ⚠️  .venv points at a stale path (folder renamed/moved) — rebuilding..."
         rm -rf .venv
@@ -39,7 +45,10 @@ echo "   ✓ Virtual environment activated"
 # Install/update backend dependencies
 echo "   Installing backend dependencies..."
 cd backend
-pip install -q -e ".[dev,integrations]" 2>&1 | grep -v "already satisfied" || true
+# `desktop` (pyinstaller) is included so ./build-desktop-mac.sh keeps working
+# after a start.sh run. Without it, any rebuild of .venv here silently drops
+# pyinstaller and the next desktop build fails with "pyinstaller not found".
+pip install -q -e ".[dev,integrations,desktop]" 2>&1 | grep -v "already satisfied" || true
 cd ..
 echo "   ✓ Backend dependencies installed"
 
