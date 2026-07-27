@@ -111,8 +111,23 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
         });
         if (res.ok) {
           setIsDeleted(true);
+          // Tell every other mounted view, so the article also disappears
+          // from the sidebar counts and any other list showing it. Hiding
+          // only this card left the same article visible elsewhere until a
+          // manual refetch, which reads as "delete did nothing".
+          window.dispatchEvent(
+            new CustomEvent("article-deleted", { detail: { id: articleId } })
+          );
+        } else {
+          // Never fail silently: an unreachable or rejected delete used to
+          // be indistinguishable from a successful one, so the only symptom
+          // was a button that appeared to do nothing.
+          const data = await res.json().catch(() => ({}));
+          window.alert(`Could not delete this article: ${data.error ?? data.detail ?? res.status}`);
         }
-      } catch { /* silent */ }
+      } catch {
+        window.alert("Could not delete this article — the app could not reach the server.");
+      }
     }
   }, [articleId]);
 

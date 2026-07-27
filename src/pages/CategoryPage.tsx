@@ -32,6 +32,21 @@ interface CategoryWithCounts extends Category {
 // slugs — no redirect-in-effect needed here anymore.
 function CategoryPageInner({ slug }: { slug: string }) {
   const [articles, setArticles] = useState<Article[]>([]);
+
+  // Remove a deleted article from this list immediately. ArticleCard hides
+  // its own instance, but the same article can be on screen in another view
+  // (and in the sidebar counts) — leaving it there reads as "delete did
+  // nothing".
+  useEffect(() => {
+    const onDeleted = (e: Event) => {
+      const id = (e as CustomEvent<{ id: number }>).detail?.id;
+      if (id == null) return;
+      setArticles((prev) => prev.filter((a) => a.id !== id));
+    };
+    window.addEventListener("article-deleted", onDeleted);
+    return () => window.removeEventListener("article-deleted", onDeleted);
+  }, []);
+
   const [category, setCategory] = useState<CategoryWithCounts | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultView(slug));
   const [currentPage, setCurrentPage] = useState(1);
