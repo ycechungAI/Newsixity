@@ -3,7 +3,10 @@ name: Security Audit
 on:
   pull_request:
   push:
+    # `hybrid` is this repo's default branch. Listing only main/master meant
+    # this workflow never ran on a push — it had effectively been dormant.
     branches:
+      - hybrid
       - main
       - master
   schedule:

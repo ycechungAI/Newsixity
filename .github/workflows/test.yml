@@ -1,8 +1,91 @@
-name: Test Workflow
+name: Tests
+
+# Runs on every push and PR. This replaced a stub that only echoed a message,
+# which meant nothing was ever actually enforced — tests, lint, and types
+# were green only for as long as someone kept them that way by hand.
 on:
+  push:
+    branches: [hybrid, main, master]
+  pull_request:
   workflow_dispatch: {}
+
+# A newer push supersedes an in-flight run for the same ref.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  backend:
+    name: Backend (pytest)
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Test workflow"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Confirm SQLite has FTS5
+        # The search tests need it. init_fts5_search degrades gracefully
+        # without FTS5, which would let that suite silently no-op rather than
+        # fail — so assert it up front instead of chasing a phantom later.
+        run: |
+          python - <<'PY'
+          import sqlite3
+          sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+          print("FTS5 available on SQLite", sqlite3.sqlite_version)
+          PY
+
+      - name: Install backend
+        run: pip install -e "backend/.[dev,integrations]"
+
+      - name: Run tests
+        run: python -m pytest backend/tests -q
+
+  frontend:
+    name: Frontend (lint, types, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: ESLint
+        # --max-warnings=0: the project is at zero, and a warning left to
+        # accumulate is exactly how the Fast Refresh one survived several
+        # versions unnoticed.
+        run: npx eslint --max-warnings=0
+
+      - name: TypeScript
+        # At 0 errors. It was at 20, and they were hiding a real bug
+        # (PrunePreview missing a field the API actually returns).
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  api-contract:
+    name: API contract (frontend calls vs backend routes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -e "backend/.[dev,integrations]"
+
+      - name: Every /api/* the frontend calls must exist
+        # Its own job so the failure is unmissable in the checks list. A
+        # missing route does not fail at runtime — the static catch-all used
+        # to answer with index.html at status 200 — and four features shipped
+        # broken that way before this check existed.
+        run: python -m pytest backend/tests/integration/test_api_contract.py -q
