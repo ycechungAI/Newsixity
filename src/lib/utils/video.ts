@@ -174,61 +174,36 @@ export interface PlaylistItem {
   url: string;
 }
 
-export interface PlaylistPagination {
-  currentPage: number;
-  pageSize: number;
+export interface PlaylistResult {
+  items: PlaylistItem[];
   totalItems: number;
-  totalPages: number;
+  /** "scrape" = full playlist, "rss" = degraded to 15, "none" = unavailable. */
+  source: "scrape" | "rss" | "none";
 }
 
 /**
- * Fetch YouTube playlist contents via RSS feed.
- * Returns up to 20 most recent videos (10 per page, max 2 pages).
+ * Fetch a YouTube playlist's full contents via our backend.
+ *
+ * This deliberately does NOT call youtube.com directly. That's what the
+ * previous version did, and it could never work: youtube.com sends no
+ * Access-Control-Allow-Origin header, so the browser blocked every request
+ * and the catch below quietly returned an empty list — the playlist sidebar
+ * has been silently empty ever since the move off Next.js. The RSS feed it
+ * used also caps at 15 items and ignores pagination parameters entirely.
+ *
+ * The backend returns every video in one response (see
+ * backend/app/lib/utils/video.py); callers paginate for display.
  */
-export async function fetchYouTubePlaylist(
-  playlistId: string,
-  options?: { page?: number; pageSize?: number }
-): Promise<{ items: PlaylistItem[]; pagination: PlaylistPagination }> {
-  const page = options?.page ?? 1;
-  const pageSize = options?.pageSize ?? 10;
-
+export async function fetchYouTubePlaylist(playlistId: string): Promise<PlaylistResult> {
+  const empty: PlaylistResult = { items: [], totalItems: 0, source: "none" };
   try {
-    // YouTube RSS feeds support start-index and max-results parameters
-    // start-index is 1-based, max-results maxes out at 15-20 for playlists
-    const startIndex = (page - 1) * pageSize + 1;
-    const feedUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${playlistId}&start-index=${startIndex}&max-results=${pageSize}`;
-    const res = await fetch(feedUrl, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return { items: [], pagination: { currentPage: page, pageSize, totalItems: 0, totalPages: 0 } };
-
-    const xml = await res.text();
-
-    const items: PlaylistItem[] = [];
-    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-    let match;
-
-    while ((match = entryRegex.exec(xml))) {
-      const block = match[1];
-      const title = block.match(/<title>([^<]+)<\/title>/)?.[1];
-      const videoId = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1];
-
-      if (title && videoId) {
-        items.push({ title, videoId, url: `https://www.youtube.com/watch?v=${videoId}` });
-      }
-    }
-
-    // YouTube RSS only supports 1-2 pages max (capped at ~15-20 items total)
-    const totalPages = page === 1 && items.length >= pageSize ? 2 : 1;
-
-    return {
-      items,
-      pagination: {
-        currentPage: page,
-        pageSize,
-        totalItems: items.length,
-        totalPages,
-      },
-    };
+    const res = await fetch(
+      `/api/videos/playlist?id=${encodeURIComponent(playlistId)}`,
+      { signal: AbortSignal.timeout(30000) }
+    );
+    if (!res.ok) return empty;
+    return (await res.json()) as PlaylistResult;
   } catch {
-    return { items: [], pagination: { currentPage: page, pageSize, totalItems: 0, totalPages: 0 } };
+    return empty;
   }
 }

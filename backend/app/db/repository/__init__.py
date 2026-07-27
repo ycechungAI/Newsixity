@@ -133,6 +133,17 @@ from app.db.repository.preferences import (
     delete_preference_keyword,
     clear_auto_preferences,
 )
+from app.db.repository.weather import (
+    list_weather_locations,
+    add_weather_location,
+    delete_weather_location,
+    add_weather_observation,
+    get_weather_observations,
+    delete_old_weather_observations,
+    upsert_weather_daily,
+    get_weather_daily,
+    delete_old_weather_daily,
+)
 
 __all__ = [
     # categories
@@ -251,4 +262,14 @@ __all__ = [
     "upsert_preference_keyword",
     "delete_preference_keyword",
     "clear_auto_preferences",
+    # weather
+    "list_weather_locations",
+    "add_weather_location",
+    "delete_weather_location",
+    "add_weather_observation",
+    "get_weather_observations",
+    "delete_old_weather_observations",
+    "upsert_weather_daily",
+    "get_weather_daily",
+    "delete_old_weather_daily",
 ]

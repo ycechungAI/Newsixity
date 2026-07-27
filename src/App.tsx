@@ -4,6 +4,7 @@ import type { Category } from "@/types";
 import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
 import ThemeProvider from "@/components/ThemeProvider";
+import { VideoPlayerProvider } from "@/components/video/VideoPlayerHost";
 import "./app/globals.css";
 
 interface CategoryWithCounts extends Category {
@@ -33,13 +34,16 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <div className="layout">
-        <Sidebar categories={categories} />
-        <div className="main">
-          <TopBar />
-          <Outlet />
+      {/* Wraps the router so a playing video survives navigation. */}
+      <VideoPlayerProvider>
+        <div className="layout">
+          <Sidebar categories={categories} />
+          <div className="main">
+            <TopBar />
+            <Outlet />
+          </div>
         </div>
-      </div>
+      </VideoPlayerProvider>
     </ThemeProvider>
   );
 }

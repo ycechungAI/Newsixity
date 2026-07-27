@@ -6,6 +6,7 @@ FLAGGED FOR SONNET REVIEW:
   * getArticles*: multiple query patterns with optional sports filtering (complex LIKE).
 """
 
+import re
 from hashlib import sha256
 
 from sqlalchemy import and_, delete, func, or_, select, text, update
@@ -16,10 +17,20 @@ from app.db.models import Article as ArticleModel
 from app.db.models import ArticleGroup as ArticleGroupModel
 from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
-from app.db.repository.helpers import Article, map_article_row, SPORTS_KEYWORDS, SUMMARIZE_CATEGORY_PRIORITY
+from app.db.repository.helpers import (
+    SPORTS_KEYWORDS,
+    SUMMARIZE_CATEGORY_PRIORITY,
+    Article,
+    map_article_row,
+)
 from app.db.session import SessionLocal, reclaim_space
 from app.lib.utils.sanitize import strip_html
 from app.lib.utils.url import parse_http_url
+
+# Matches "word" runs (unicode-aware, so non-ASCII terms still work). Used to
+# tokenize free-text search input into safe FTS5 phrase terms — see
+# _sanitize_fts5_query below.
+_FTS5_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
 
 def get_articles_by_category(
@@ -235,39 +246,126 @@ def get_saved_article_count(category_slug: str | None = None) -> int:
         return db.execute(query).scalar() or 0
 
 
+def _fts5_available(db: Session) -> bool:
+    """Whether the ``articles_fts`` virtual table exists on this connection.
+
+    Cheap (single row lookup on ``sqlite_master``), so it's fine to call per
+    search request rather than caching — and it stays correct if init_db's
+    FTS5 probe ever fails on a given platform.
+    """
+    return (
+        db.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='articles_fts'")
+        ).first()
+        is not None
+    )
+
+
+def _sanitize_fts5_query(query_str: str) -> str:
+    """Turn arbitrary user input into a safe FTS5 MATCH query string.
+
+    FTS5's query syntax gives special meaning to characters/keywords a search
+    box's free text will routinely contain — `"`, `*`, `-`, `^`, `:` (column
+    filters), and bare `AND`/`OR`/`NOT`/`NEAR` — any of which can raise a
+    syntax error or silently change what's being matched. Tokenizing to
+    unicode word runs and wrapping each token in double quotes sidesteps all
+    of that: a quoted token is always a literal phrase to FTS5, never an
+    operator, regardless of what the user typed.
+
+    Returns an empty string if the input has no word characters at all
+    (e.g. it was only punctuation) — callers should treat that as "no
+    matches" rather than passing it to MATCH.
+    """
+    tokens = _FTS5_TOKEN_RE.findall(query_str)
+    if not tokens:
+        return ""
+    return " AND ".join(f'"{tok}"' for tok in tokens)
+
+
+def _search_articles_fts5(
+    db: Session,
+    query_str: str,
+    category: str | None,
+    limit: int,
+) -> list[Article]:
+    """FTS5-backed search over title + content + summary, bm25-ranked."""
+    match_query = _sanitize_fts5_query(query_str)
+    if not match_query:
+        return []
+
+    sql = """
+        SELECT a.*, f.name AS feed_name, c.slug AS category_slug
+        FROM articles_fts
+        JOIN articles a ON a.id = articles_fts.rowid
+        JOIN feeds f ON a.feed_id = f.id
+        JOIN categories c ON f.category_id = c.id
+        WHERE articles_fts MATCH :match_query
+    """
+    params: dict = {"match_query": match_query, "limit": limit}
+    if category:
+        sql += " AND c.slug = :category"
+        params["category"] = category
+    # bm25() is more-negative-is-better in SQLite FTS5, so ascending order
+    # ranks the best matches first.
+    sql += " ORDER BY bm25(articles_fts) LIMIT :limit"
+
+    rows = db.execute(text(sql), params).mappings().all()
+    return [map_article_row(dict(row)) for row in rows]
+
+
+def _search_articles_like(
+    db: Session,
+    query_str: str,
+    category: str | None,
+    limit: int,
+) -> list[Article]:
+    """Title-only LIKE scan — the pre-FTS5 behaviour, kept as a fallback for
+    SQLite builds without the FTS5 extension compiled in."""
+    query = (
+        select(
+            ArticleModel,
+            FeedModel.name.label("feed_name"),
+            CategoryModel.slug.label("category_slug"),
+        )
+        .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+        .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
+        .where(ArticleModel.title.ilike(f"%{query_str}%"))
+    )
+
+    if category:
+        query = query.where(CategoryModel.slug == category)
+
+    rows = db.execute(
+        query.order_by(ArticleModel.published_at.desc()).limit(limit)
+    ).all()
+
+    return [
+        map_article_row({
+            **row[0].__dict__,
+            "feed_name": row.feed_name,
+            "category_slug": row.category_slug,
+        })
+        for row in rows
+    ]
+
+
 def search_articles(
     query_str: str,
     category: str | None = None,
     limit: int = 50,
 ) -> list[Article]:
-    """Search articles by title."""
+    """Search articles by title, content, and summary.
+
+    Uses FTS5 full-text search with bm25() relevance ranking when the
+    ``articles_fts`` index is available (see init_db.init_fts5_search) —
+    this is what lets a term that only appears in an article's body or
+    summary be found, not just the title. Falls back to the previous
+    title-only LIKE scan when FTS5 isn't available on this SQLite build.
+    """
     with SessionLocal() as db:
-        query = (
-            select(
-                ArticleModel,
-                FeedModel.name.label("feed_name"),
-                CategoryModel.slug.label("category_slug"),
-            )
-            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
-            .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
-            .where(ArticleModel.title.ilike(f"%{query_str}%"))
-        )
-
-        if category:
-            query = query.where(CategoryModel.slug == category)
-
-        rows = db.execute(
-            query.order_by(ArticleModel.published_at.desc()).limit(limit)
-        ).all()
-
-        return [
-            map_article_row({
-                **row[0].__dict__,
-                "feed_name": row.feed_name,
-                "category_slug": row.category_slug,
-            })
-            for row in rows
-        ]
+        if _fts5_available(db):
+            return _search_articles_fts5(db, query_str, category, limit)
+        return _search_articles_like(db, query_str, category, limit)
 
 
 def upsert_article(
@@ -323,7 +421,19 @@ def upsert_article(
 
 
 def update_article_summary(article_id: int, summary: str, model: str) -> None:
-    """Update an article's summary."""
+    """Update an article's summary.
+
+    Refuses to store a blank summary. Writing '' here is worse than writing
+    nothing: it is not NULL, so a ``summary IS NULL`` queue treats the article
+    as done and never retries it, while the UI has nothing to show. Callers
+    that genuinely have no summary should write an explicit bracketed marker
+    (see the "[Summarization failed: ...]" / "[No content to summarize]"
+    paths in lib/scheduler/summarizer.py) so the state is visible and
+    re-queueable. See _needs_summary().
+    """
+    if summary is None or not summary.strip():
+        raise ValueError(f"refusing to store an empty summary for article {article_id}")
+
     with SessionLocal() as db:
         db.execute(
             update(ArticleModel)
@@ -427,6 +537,20 @@ def toggle_article_saved(article_id: int) -> None:
             db.commit()
 
 
+def _needs_summary():
+    """Predicate for "this article still needs summarizing".
+
+    Must cover the empty string, not just NULL. A summarization that returned
+    nothing (an Ollama model whose entire reply was a stripped <think> block,
+    for instance) used to write summary='' — which is not NULL, so a
+    ``summary IS NULL`` queue silently skipped that article forever. The
+    Console then reported "All caught up" while real articles sat
+    unsummarized. update_article_summary now refuses to store an empty
+    summary, and this predicate re-queues the ones already written that way.
+    """
+    return or_(ArticleModel.summary.is_(None), ArticleModel.summary == "")
+
+
 def get_unsummarized_articles(
     limit: int,
     category_slug: str | None = None,
@@ -443,7 +567,7 @@ def get_unsummarized_articles(
             .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
             .where(
                 and_(
-                    ArticleModel.summary.is_(None),
+                    _needs_summary(),
                     FeedModel.name != "Manual Links",
                 )
             )
@@ -479,7 +603,7 @@ def get_unsummarized_saved_articles(limit: int = 30) -> list[Article]:
             .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
             .where(
                 and_(
-                    ArticleModel.summary.is_(None),
+                    _needs_summary(),
                     ArticleModel.is_saved == 1,
                     ArticleModel.link.isnot(None),
                     ArticleModel.link != "",
@@ -516,7 +640,7 @@ def get_unsummarized_by_category(
             .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
             .where(
                 and_(
-                    ArticleModel.summary.is_(None),
+                    _needs_summary(),
                     ArticleModel.is_saved == 0,
                     CategoryModel.slug == category_slug,
                     ArticleModel.link.isnot(None),
@@ -554,7 +678,7 @@ def get_recent_unsummarized_articles(
             .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
             .where(
                 and_(
-                    ArticleModel.summary.is_(None),
+                    _needs_summary(),
                     ArticleModel.fetched_at > func.datetime("now", f"-{since_minutes} minutes"),
                     ArticleModel.link.isnot(None),
                     ArticleModel.link != "",

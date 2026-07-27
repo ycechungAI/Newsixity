@@ -7,12 +7,16 @@ operations (queue management, DB backup, dev-server restart).
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 
 from app.config import settings
 from app.db.repository import (
@@ -24,8 +28,21 @@ from app.db.repository import (
     reset_failed_and_skipped_articles,
     MAX_UNSUMMARIZED_QUEUE,
 )
+from app.lib.backup.restore import (
+    AUTO_PREFIX,
+    MAX_RESTORE_UPLOAD_BYTES,
+    BackupValidationError,
+    export_filename,
+    export_live_snapshot,
+    list_backups,
+    resolve_backup_for_download,
+    stage_restore_from_bytes,
+    stage_restore_from_existing,
+)
 from app.lib.logger.console import get_logs
 from app.lib.server.rate_limit import ONE_HOUR_MS, TEN_MIN_MS, rate_limit
+
+logger = logging.getLogger("newsixity")
 
 router = APIRouter()
 
@@ -72,10 +89,25 @@ async def cull_queue(limit: int = Query(0)) -> dict:
     }
 
 
-def _cleanup_old_backups(backups_dir: Path, prefix: str) -> None:
+def _cleanup_old_backups(backups_dir: Path, prefix: str, exclude_prefix: str | None = None) -> None:
+    """Keep only the MAX_BACKUPS most recent backups starting with ``prefix``.
+
+    ``exclude_prefix`` filters out names that also match a *more specific*
+    prefix — e.g. pruning manual backups (prefix ``"newsixity-"``) must not
+    also delete automatic ones (prefix ``"newsixity-auto-"``), since every
+    auto backup name also starts with ``"newsixity-"``. Bug: this used to be
+    called without ``exclude_prefix``, so a manual backup's cleanup could
+    delete automatic backups.
+    """
     try:
         backups = sorted(
-            (p for p in backups_dir.iterdir() if p.name.startswith(prefix) and p.suffix == ".db"),
+            (
+                p
+                for p in backups_dir.iterdir()
+                if p.name.startswith(prefix)
+                and p.suffix == ".db"
+                and not (exclude_prefix and p.name.startswith(exclude_prefix))
+            ),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -103,14 +135,14 @@ async def create_backup() -> dict:
         conn.close()
 
     size_kb = backup_path.stat().st_size / 1024
-    _cleanup_old_backups(backups_dir, "newsixity-")
+    _cleanup_old_backups(backups_dir, "newsixity-", exclude_prefix=AUTO_PREFIX)
 
     total_backups = len(
         [
             p
             for p in backups_dir.iterdir()
             if p.name.startswith("newsixity-")
-            and not p.name.startswith("newsixity-auto-")
+            and not p.name.startswith(AUTO_PREFIX)
             and p.suffix == ".db"
         ]
     )
@@ -171,3 +203,113 @@ async def cleanup_unsummarizable() -> dict:
         "deleted": result["deleted"],
         "message": result["message"],
     }
+
+
+@router.get(
+    "/console/backups",
+    dependencies=[Depends(rate_limit("console-backups-list", 60, TEN_MIN_MS))],
+)
+async def get_backups() -> dict:
+    """List `*.db` files in the backups dir (name, size, mtime, auto/manual)."""
+    backups = await asyncio.to_thread(list_backups)
+    return {"backups": backups}
+
+
+@router.get(
+    "/console/backups/export",
+    dependencies=[Depends(rate_limit("console-backups-export", 10, ONE_HOUR_MS))],
+)
+async def export_live_database():
+    """Download a snapshot of the *current* database, taken on demand.
+
+    "Hot" in the sense that it needs no prior backup and no restart — it
+    snapshots the live DB as it is right now. The file that comes back is a
+    complete standalone database (VACUUM INTO folds in WAL content, which a
+    manual copy of newsixity.db would miss), so it can be carried to another
+    machine and fed straight to POST /console/backups/restore there.
+    """
+    try:
+        tmp_path = await asyncio.to_thread(export_live_snapshot)
+    except BackupValidationError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status_code)
+    except Exception as e:  # noqa: BLE001
+        logger.error("[Newsixity] Database export failed: %s", e)
+        return JSONResponse({"error": "Export failed"}, status_code=500)
+
+    # The snapshot is a throwaway; delete it once the response has been sent.
+    return FileResponse(
+        path=tmp_path,
+        media_type="application/octet-stream",
+        filename=export_filename(),
+        background=BackgroundTask(lambda: tmp_path.unlink(missing_ok=True)),
+    )
+
+
+@router.get(
+    "/console/backups/download",
+    dependencies=[Depends(rate_limit("console-backups-download", 30, ONE_HOUR_MS))],
+)
+async def download_backup(name: str = Query(...)):
+    """Download an existing backup file from the backups directory as-is."""
+    try:
+        path = await asyncio.to_thread(resolve_backup_for_download, name)
+    except BackupValidationError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status_code)
+
+    return FileResponse(
+        path=path,
+        media_type="application/octet-stream",
+        filename=path.name,
+    )
+
+
+@router.post(
+    "/console/backups/restore",
+    dependencies=[Depends(rate_limit("console-backups-restore", 5, ONE_HOUR_MS))],
+)
+async def restore_backup(request: Request, name: str | None = Query(default=None)) -> JSONResponse:
+    """Stage a restore for the next app start.
+
+    Two input modes, disambiguated by the ``name`` query param:
+      - ``?name=<existing-backup>`` restores a file already in the backups dir.
+      - no ``name`` + a raw ``application/octet-stream`` body restores an
+        uploaded file. Multipart/`UploadFile` is intentionally not used —
+        `python-multipart` is not a backend dependency.
+
+    Both paths run the full validation gate (size cap, magic header,
+    read-only integrity/foreign-key/schema checks) before anything is staged;
+    the live database is never touched by this endpoint. On success the
+    validated file is moved to `pending-restore.db`, applied at the next
+    process start by `apply_pending_restore()`.
+    """
+    try:
+        if name:
+            result = await asyncio.to_thread(stage_restore_from_existing, name)
+        else:
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > MAX_RESTORE_UPLOAD_BYTES:
+                        return JSONResponse({"error": "Upload too large"}, status_code=413)
+                except ValueError:
+                    pass
+
+            body = await request.body()
+            if not body:
+                return JSONResponse(
+                    {"error": "No backup name or upload body provided"}, status_code=400
+                )
+            result = await asyncio.to_thread(stage_restore_from_bytes, body)
+    except BackupValidationError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status_code)
+    except Exception as e:  # noqa: BLE001
+        logger.error("[Newsixity] Backup restore failed: %s", e)
+        return JSONResponse({"error": "Restore failed"}, status_code=500)
+
+    return JSONResponse(
+        {
+            "success": True,
+            **result,
+            "message": "Restore staged — quit and reopen Newsixity to apply.",
+        }
+    )

@@ -287,3 +287,78 @@ class PodcastEpisode(Base):
         Index("idx_podcast_episodes_published_at", text("published_at DESC")),
         {"sqlite_autoincrement": True},
     )
+
+
+class WeatherLocation(Base):
+    """Persisted user cities. Gives WeatherObservation/WeatherDaily a stable
+
+    key instead of the frontend's fragile float-formatted "lat,lon" string.
+    """
+
+    __tablename__ = "weather_locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    country: Mapped[str | None] = mapped_column(Text)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = (
+        UniqueConstraint("latitude", "longitude", name="uq_weather_locations_lat_lon"),
+        {"sqlite_autoincrement": True},
+    )
+
+
+class WeatherObservation(Base):
+    """Point-in-time current-conditions snapshot for a location."""
+
+    __tablename__ = "weather_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("weather_locations.id"), nullable=False
+    )
+    observed_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+    temperature: Mapped[float | None] = mapped_column(Float)
+    apparent_temperature: Mapped[float | None] = mapped_column(Float)
+    humidity: Mapped[float | None] = mapped_column(Float)
+    wind_speed: Mapped[float | None] = mapped_column(Float)
+    weather_code: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "idx_weather_observations_location_observed",
+            "location_id",
+            text("observed_at DESC"),
+        ),
+        {"sqlite_autoincrement": True},
+    )
+
+
+class WeatherDaily(Base):
+    """One row per (location, date). Open-Meteo's ``daily`` response is
+
+    columnar parallel arrays; callers pivot to rows before upserting here.
+    """
+
+    __tablename__ = "weather_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("weather_locations.id"), nullable=False
+    )
+    date: Mapped[str] = mapped_column(Text, nullable=False)
+    temp_max: Mapped[float | None] = mapped_column(Float)
+    temp_min: Mapped[float | None] = mapped_column(Float)
+    precipitation_sum: Mapped[float | None] = mapped_column(Float)
+    weather_code: Mapped[int | None] = mapped_column(Integer)
+    wind_speed_max: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = (
+        UniqueConstraint("location_id", "date", name="uq_weather_daily_location_date"),
+        Index("idx_weather_daily_location_date", "location_id", text("date DESC")),
+        {"sqlite_autoincrement": True},
+    )
