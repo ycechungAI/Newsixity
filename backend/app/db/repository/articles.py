@@ -261,7 +261,7 @@ def _fts5_available(db: Session) -> bool:
     )
 
 
-def _sanitize_fts5_query(query_str: str) -> str:
+def _sanitize_fts5_query(query_str: str, prefix: bool = False) -> str:
     """Turn arbitrary user input into a safe FTS5 MATCH query string.
 
     FTS5's query syntax gives special meaning to characters/keywords a search
@@ -275,11 +275,24 @@ def _sanitize_fts5_query(query_str: str) -> str:
     Returns an empty string if the input has no word characters at all
     (e.g. it was only punctuation) — callers should treat that as "no
     matches" rather than passing it to MATCH.
+
+    ``prefix`` makes the *final* token a prefix match ("goog" finds
+    "google"). FTS5 matches whole tokens, so without this a search box feels
+    broken while you are still typing the last word — the old LIKE search
+    matched substrings, so this preserves the behaviour users expect. Only
+    the last token is widened; earlier ones are complete words the user has
+    finished typing.
     """
     tokens = _FTS5_TOKEN_RE.findall(query_str)
     if not tokens:
         return ""
-    return " AND ".join(f'"{tok}"' for tok in tokens)
+
+    quoted = [f'"{tok}"' for tok in tokens]
+    if prefix:
+        # The * must sit outside the quotes to be a prefix operator rather
+        # than a literal asterisk inside the phrase.
+        quoted[-1] = f'{quoted[-1]}*'
+    return " AND ".join(quoted)
 
 
 def _search_articles_fts5(
@@ -287,9 +300,10 @@ def _search_articles_fts5(
     query_str: str,
     category: str | None,
     limit: int,
+    prefix: bool = False,
 ) -> list[Article]:
     """FTS5-backed search over title + content + summary, bm25-ranked."""
-    match_query = _sanitize_fts5_query(query_str)
+    match_query = _sanitize_fts5_query(query_str, prefix=prefix)
     if not match_query:
         return []
 
@@ -353,6 +367,7 @@ def search_articles(
     query_str: str,
     category: str | None = None,
     limit: int = 50,
+    prefix: bool = False,
 ) -> list[Article]:
     """Search articles by title, content, and summary.
 
@@ -364,7 +379,8 @@ def search_articles(
     """
     with SessionLocal() as db:
         if _fts5_available(db):
-            return _search_articles_fts5(db, query_str, category, limit)
+            return _search_articles_fts5(db, query_str, category, limit, prefix)
+        # The LIKE path already matches substrings, so prefix is a no-op there.
         return _search_articles_like(db, query_str, category, limit)
 
 

@@ -327,3 +327,54 @@ class TestSearchLikeFallback:
             content="content",
         )
         search_articles('"weird" * query- AND stuff')
+
+
+class TestPrefixMatching:
+    """The search box widens the final token so typing feels responsive.
+
+    FTS5 matches whole tokens, so without this a search box appears broken
+    mid-word — the old LIKE search matched substrings, and users expect that.
+    """
+
+    def _seed(self, fts5_db):
+        return _seed_article(
+            fts5_db,
+            category_slug="technology",
+            title="Google announces a new model",
+            content="body text",
+        )
+
+    def test_partial_last_word_matches(self, fts5_db):
+        article_id = self._seed(fts5_db)
+        assert [a.id for a in search_articles("goog", prefix=True)] == [article_id]
+
+    def test_partial_word_does_not_match_without_prefix(self, fts5_db):
+        self._seed(fts5_db)
+        assert search_articles("goog") == []
+
+    def test_earlier_tokens_stay_exact(self, fts5_db):
+        """Only the final token is widened; finished words must stay precise."""
+        self._seed(fts5_db)
+        # "annou" is in complete-word position here, so it must not match.
+        assert search_articles("annou google", prefix=True) == []
+
+    def test_full_word_still_matches_with_prefix_on(self, fts5_db):
+        article_id = self._seed(fts5_db)
+        assert [a.id for a in search_articles("google", prefix=True)] == [article_id]
+
+    def test_prefix_still_rejects_operator_characters(self, fts5_db):
+        self._seed(fts5_db)
+        for hostile in ['goog" OR "x', "goog*", "goog:title", "NEAR/2 goog"]:
+            search_articles(hostile, prefix=True)  # must not raise
+
+    def test_prefix_on_punctuation_only_query_is_safe(self, fts5_db):
+        assert search_articles("!!!", prefix=True) == []
+
+
+class TestSanitizerPrefixForm:
+    def test_star_sits_outside_the_quotes(self):
+        """Inside the quotes the * would be a literal, not a prefix operator."""
+        assert _sanitize_fts5_query("google news", prefix=True) == '"google" AND "news"*'
+
+    def test_no_prefix_by_default(self):
+        assert _sanitize_fts5_query("google news") == '"google" AND "news"'
