@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import type { Article, Category } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
@@ -12,6 +13,14 @@ interface CategoryWithCounts extends Category {
 }
 
 export default function HomePage() {
+  // A search must always land on its own results page. The old top-bar form
+  // submitted GET /?search=term, which nothing read — so the feed just
+  // re-rendered with every article (24 pages of them) and looked like a
+  // broken search. Forward that shape to /search so any stale bookmark,
+  // cached page, or old client still ends up somewhere correct.
+  const [searchParams] = useSearchParams();
+  const legacySearch = searchParams.get("search")?.trim();
+
   const [articles, setArticles] = useState<Article[]>([]);
   const [totalArticles, setTotalArticles] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -65,6 +74,11 @@ export default function HomePage() {
   }, [currentPage, perPage, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
+
+  // Placed after every hook so hook order stays constant between renders.
+  if (legacySearch) {
+    return <Navigate to={`/search?q=${encodeURIComponent(legacySearch)}`} replace />;
+  }
 
   return (
     <div className="page">
