@@ -3,6 +3,7 @@
 from ollama import AsyncClient
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.db.repository import get_setting
 
@@ -40,6 +41,32 @@ SUGGESTED_MODELS = [
         "recommended": False,
     },
 ]
+
+
+@router.get("/ollama/health")
+async def ollama_health() -> JSONResponse:
+    """Liveness probe for the Ollama service, with the installed model names.
+
+    Distinct from /ollama/models, which always answers 200 and reports
+    reachability in an `isRunning` field. This one signals with the status
+    code — 200 up, 503 down — which is what a health probe is for.
+
+    Added because components/settings/OllamaModelSelector.tsx already called
+    it and no such route existed: the static catch-all answered with the
+    SPA's index.html at status 200, so the component read "online" from an
+    HTML page and then found no models.
+    """
+    host = get_setting("ollama_host") or "http://localhost:11434"
+    try:
+        response = await AsyncClient(host=host).list()
+        models = [m.model for m in response.models if m.model]
+    except Exception:
+        return JSONResponse(
+            {"status": "offline", "host": host, "availableModels": []},
+            status_code=503,
+        )
+
+    return JSONResponse({"status": "online", "host": host, "availableModels": models})
 
 
 @router.get("/ollama/models")

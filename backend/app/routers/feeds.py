@@ -67,8 +67,46 @@ async def refresh_feeds(category: Optional[str] = Query(None)) -> dict:
     return {"refreshed": refreshed, "newArticles": new_articles, "errors": errors}
 
 
+@router.get(
+    "/feeds/weights",
+    dependencies=[Depends(rate_limit("feeds-weights-get", 120, TEN_MIN_MS))],
+)
+async def get_feed_weights() -> dict:
+    """Feeds with their ranking weights, for the Settings > Feed Rankings list.
+
+    This had no GET at all: the Settings page requested it, the catch-all
+    static route answered with the SPA's index.html at status 200, and the
+    JSON parse failed silently — so Feed Rankings rendered empty with no
+    error anywhere. A missing API route returning 200 HTML is why that hid.
+    """
+    feeds = get_all_feeds()
+    return {
+        "feeds": [
+            {
+                "id": f.id,
+                "name": f.name,
+                "url": f.url,
+                "enabled": f.enabled,
+                "categorySlug": f.category_slug,
+                "sourceWeight": f.source_weight,
+            }
+            for f in feeds
+        ]
+    }
+
+
+# PATCH is what the Settings page sends; PUT is kept so any older client
+# still works. Registering only PUT meant every weight change 405'd.
+# Registered as two routes rather than one api_route(methods=[...]) so each
+# gets a distinct OpenAPI operation id instead of colliding.
+@router.patch(
+    "/feeds/weights",
+    operation_id="update_feed_weights",
+    dependencies=[Depends(rate_limit("feeds-weights-patch", 60, TEN_MIN_MS))],
+)
 @router.put(
     "/feeds/weights",
+    operation_id="update_feed_weights_put",
     dependencies=[Depends(rate_limit("feeds-weights-patch", 60, TEN_MIN_MS))],
 )
 async def update_feed_weights(body: FeedWeightUpdateRequestBody) -> dict:
