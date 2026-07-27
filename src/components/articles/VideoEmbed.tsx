@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { extractVideoInfo, type PlaylistItem } from "@/lib/utils/video";
 import { useVideoPlayer, useVideoSlot } from "@/lib/video/playerContext";
 
@@ -44,6 +44,29 @@ export default function VideoEmbed({
   const [playlistPage, setPlaylistPage] = useState(0);
 
   const { dockWidthPct, setDockWidthPct } = useVideoPlayer();
+
+  /**
+   * A playlist-only link (youtube.com/playlist?list=...) has no video id, so
+   * extractVideoInfo falls back to an /embed/videoseries?list=... URL. That
+   * form renders "Video unavailable" — there is no video in it to play —
+   * which looked like a broken video even though clicking any playlist entry
+   * worked fine, because that swaps in a real /embed/<id> URL.
+   *
+   * Once the playlist resolves, start on its first video instead. The list
+   * parameter is kept so YouTube still treats it as a playlist.
+   */
+  useEffect(() => {
+    if (activeVideoId) return;                       // A real video is loaded.
+    if (!videoInfo?.playlistId) return;              // Not a playlist link.
+    const first = playlistItems?.[0];
+    if (!first) return;                              // Not fetched yet.
+
+    setCurrentEmbedUrl(
+      `https://www.youtube.com/embed/${first.videoId}?list=${videoInfo.playlistId}`
+    );
+    setCurrentTitle(first.title);
+    setActiveVideoId(first.videoId);
+  }, [activeVideoId, playlistItems, videoInfo?.playlistId]);
 
   const isAnimex = videoInfo?.type === "animex";
   const isDirect = videoInfo?.type === "direct";
