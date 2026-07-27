@@ -25,7 +25,7 @@ Notes for whoever builds it:
   hand-roll a check.
 - Verify the URL actually parses as a feed *before* saving it, and surface
   the failure. A feed row that silently never fetches is the same failure
-  class as the bugs listed in §3.
+  class as the bugs listed in §6.
 - Deleting a feed must not orphan its articles — decide explicitly between
   cascade-delete and reassign, and cover it in `test_data_integrity.py`.
 - New categories may be needed if users add feeds outside the existing set;
@@ -60,17 +60,54 @@ Related smaller wins while in here:
   built in, so this is nearly free.
 - Search within a single feed or category from that category's page.
 
-## 3. Carry-overs from v0.3
+## 3. Daily AI briefing
 
-- **Daily AI briefing** — planned, never built. Table + Ollama generation +
-  cron + a `/briefing` page. Exclude Manual Links, matching
-  `lib/scheduler/summarizer.py`.
+Planned for v0.3 and never built — moved here as a first-class v0.4 feature
+rather than a leftover.
+
+A once-a-day summary of what actually mattered, generated locally from the
+articles already in the database. Nothing leaves the machine: it runs through
+the same Ollama instance the summarizer uses.
+
+Shape:
+
+- **Table** `daily_briefing` — unique `date`, `content`, `model`,
+  `created_at`. Same shape as `MarketHeatmapSnapshot` (`db/models.py`); a
+  unique date is what makes "generate once, serve many times" safe.
+  `create_all()` picks up the new table; a new index on an *existing* table
+  would need a line in `init_db.py`.
+- **Generation** — take the day's top-ranked articles using the existing
+  scorer, then `lib/integrations/ollama.py` /
+  `lib/services/summarization.py`. **Exclude the Manual Links feed**, exactly
+  as `lib/scheduler/summarizer.py` does — a briefing about the user's own
+  saved links is noise.
+- **Schedule** — a cron job in `lib/scheduler/service.py`, following the
+  `BACKUP_HOUR` block already there (`max_instances=1`, `coalesce=True`).
+  Plus an on-demand regenerate, because a briefing generated before the
+  morning's articles arrived is worth redoing.
+- **Serving** — cache by date. Ollama generation is slow and the answer for a
+  past date never changes, so re-reading a briefing must never re-generate.
+- **Frontend** — a `/briefing` page and a sidebar link next to Podcasts.
+
+Watch for:
+
+- **Ollama may be down or the model missing.** The briefing must degrade to a
+  clear "not generated yet" state, never a spinner that hangs. There is now a
+  `GET /api/ollama/health` (200 up / 503 down) to check cheaply.
+- **Generation is slow** — do it in the background job, not in the request.
+  Blocking I/O never goes in an `async def` (see spec-v0.3 §3.1).
+- Register the route in `main.py` and **verify it end to end in the browser**;
+  `test_api_contract.py` will catch a missing route, but only for endpoints
+  the frontend actually calls.
+
+## 4. Carry-overs from v0.3
+
 - **Hourly weather scheduler** — observations are currently recorded when a
   forecast is viewed, which covers normal use but not a machine left idle.
 - **Rebuild the desktop app** after any backend change:
   `./build-desktop-mac.sh`. The frozen sidecar does not pick up source edits.
 
-## 4. Build, size, and environment — measured, don't re-derive
+## 5. Build, size, and environment — measured, don't re-derive
 
 ### Where the app's size actually is
 
@@ -108,7 +145,7 @@ if language-aware extraction is enabled.
 - `./build-desktop-mac.sh` (or `npm run build:mac`) is the only entry point.
 - Tauri rebuilds `Newsixity.app` **in place**, so an un-installed build is
   silently replaced by the next one. The script now keeps a timestamped copy
-  in `dist-desktop/` (last 3 retained, gitignored).
+  in `install_file/` (last 3 retained, gitignored).
 - It **verifies** the bundle after building — binary present, Python resource
   present — rather than trusting the build's own success summary, which
   prints a DMG path even when only a scratch image was produced.
@@ -142,7 +179,7 @@ ever fails that way again, this is why:
   (`below_threshold` missing from `PrunePreview`, a field the API does
   return).
 
-## 5. The bug class to keep testing for
+## 6. The bug class to keep testing for
 
 Five bugs in v0.3 were all the same shape: **a feature wired on one side and
 silently doing nothing on the other.** None of them threw an error, and every
