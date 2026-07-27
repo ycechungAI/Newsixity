@@ -17,6 +17,7 @@ from app.db.repository import (
     upsert_article,
     get_prunable_articles,
     prune_articles,
+    search_articles,
 )
 from app.schemas import (
     Article,
@@ -26,6 +27,27 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+# MUST be declared before /articles/{article_id}: FastAPI matches routes in
+# definition order, so a later /articles/search would be swallowed by the
+# {article_id} route and fail as an invalid integer.
+@router.get(
+    "/articles/search",
+    dependencies=[Depends(rate_limit("article-search", 120, TEN_MIN_MS))],
+)
+async def search(
+    q: str = Query(..., min_length=1, max_length=200),
+    category: Optional[str] = Query(None, max_length=80),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """Full-text search over article titles, bodies, and summaries.
+
+    Backed by FTS5 with bm25 relevance ranking where available, falling back
+    to a title-only LIKE scan otherwise (see repository.articles).
+    """
+    results = search_articles(q, category, limit, prefix=True)
+    return {"query": q, "count": len(results), "articles": results}
 
 
 @router.get(
