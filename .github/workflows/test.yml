@@ -40,6 +40,22 @@ jobs:
       - name: Install backend
         run: pip install -e "backend/.[dev,integrations]"
 
+      # test_static_routes.py exercises the SPA fallback and the /api 404
+      # catch-all against the real built frontend, so dist/ has to exist.
+      # It is gitignored, so a fresh checkout has none and those 14 tests
+      # fail on a missing index.html. Skipping them instead would leave the
+      # catch-all untested — and a missing-route bug returning index.html at
+      # status 200 is exactly what shipped four broken features.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build frontend (needed by the static-route tests)
+        run: |
+          npm ci
+          npm run build
+
       - name: Run tests
         run: python -m pytest backend/tests -q
 
