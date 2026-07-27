@@ -14,6 +14,7 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.base import Base
@@ -68,6 +69,92 @@ def _copy_seed_db_if_first_run() -> None:
         logger.error("Failed to copy seed database: %s", e)
 
 
+def init_fts5_search(session: Session) -> bool:
+    """Create the external-content FTS5 search index over articles + triggers.
+
+    ``articles_fts`` mirrors ``title``, ``content``, ``summary`` from
+    ``articles`` (``content='articles', content_rowid='id'`` — no duplicated
+    storage, the FTS index just references the source table by rowid).
+    INSERT/UPDATE/DELETE triggers on ``articles`` keep it in sync going
+    forward. Idempotent (``IF NOT EXISTS`` throughout) since this runs on
+    every startup against a potentially-existing production database; the
+    ``rebuild`` backfill only runs the first time the table is created, not
+    on every subsequent startup.
+
+    Not every SQLite build has the FTS5 extension compiled in (notably some
+    Windows/Linux CI images) — probe for it here and degrade gracefully:
+    log a warning and return False so callers can fall back to a LIKE-based
+    search instead of failing app startup.
+    """
+    try:
+        already_existed = (
+            session.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='articles_fts'"
+                )
+            ).first()
+            is not None
+        )
+
+        session.execute(
+            text(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+                    title, content, summary,
+                    content='articles', content_rowid='id'
+                )
+                """
+            )
+        )
+
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS articles_fts_ai AFTER INSERT ON articles BEGIN
+                    INSERT INTO articles_fts(rowid, title, content, summary)
+                    VALUES (new.id, new.title, new.content, new.summary);
+                END
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS articles_fts_ad AFTER DELETE ON articles BEGIN
+                    INSERT INTO articles_fts(articles_fts, rowid, title, content, summary)
+                    VALUES ('delete', old.id, old.title, old.content, old.summary);
+                END
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS articles_fts_au AFTER UPDATE ON articles BEGIN
+                    INSERT INTO articles_fts(articles_fts, rowid, title, content, summary)
+                    VALUES ('delete', old.id, old.title, old.content, old.summary);
+                    INSERT INTO articles_fts(rowid, title, content, summary)
+                    VALUES (new.id, new.title, new.content, new.summary);
+                END
+                """
+            )
+        )
+
+        if not already_existed:
+            # One-time backfill: index rows that existed before articles_fts did.
+            session.execute(text("INSERT INTO articles_fts(articles_fts) VALUES('rebuild')"))
+
+        session.commit()
+        return True
+    except Exception as e:  # noqa: BLE001 — FTS5 may simply not be compiled in.
+        session.rollback()
+        logger.warning(
+            "FTS5 full-text search unavailable (%s); search_articles() will use the LIKE fallback.",
+            e,
+        )
+        return False
+
+
 def init_db() -> None:
     """Create tables (if missing) and seed default categories + Manual Links feed."""
     # On first run of a packaged app, copy the bundled seed database.
@@ -82,6 +169,9 @@ def init_db() -> None:
         session.execute(
             text("CREATE INDEX IF NOT EXISTS idx_articles_is_read_published ON articles(is_read, published_at DESC)")
         )
+
+    with SessionLocal() as session:
+        init_fts5_search(session)
 
     with SessionLocal() as session:
         for name, slug, sort_order in DEFAULT_CATEGORIES:

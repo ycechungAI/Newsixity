@@ -94,6 +94,7 @@ from app.routers import (
     research,
     settings as settings_router,
     summarize,
+    videos,
 )
 
 app.include_router(health.router, prefix="/api", tags=["health"])
@@ -107,6 +108,7 @@ app.include_router(ollama.router, prefix="/api", tags=["ollama"])
 app.include_router(research.router, prefix="/api", tags=["research"])
 app.include_router(summarize.router, prefix="/api", tags=["summarize"])
 app.include_router(podcasts.router, prefix="/api", tags=["podcasts"])
+app.include_router(videos.router, prefix="/api", tags=["videos"])
 app.include_router(console.router, prefix="/api", tags=["console"])
 
 

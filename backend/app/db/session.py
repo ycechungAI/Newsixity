@@ -16,6 +16,17 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
+from app.lib.backup.restore import apply_pending_restore
+
+# Must run before _build_engine(): this module is the only guaranteed choke
+# point both the dev (`uvicorn app.main:app`) and frozen (`run_server.py`)
+# entrypoints pass through to reach the DB, and `engine`/`SessionLocal` below
+# are module-level singletons created at import time. Swapping a staged
+# restore in after the engine exists would risk touching a live connection;
+# doing it here, before anything opens the DB, keeps the swap safe. Defensive
+# by design — see apply_pending_restore's docstring for why a failure here
+# must never block startup.
+apply_pending_restore()
 
 
 def _build_engine() -> Engine:

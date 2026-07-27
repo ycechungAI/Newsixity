@@ -87,6 +87,7 @@ export default function ConsolePage() {
   const [loading, setLoading]       = useState(true);
   const [stopping, setStopping]     = useState(false);
   const [backing, setBacking]       = useState(false);
+  const [exporting, setExporting]   = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
   const [pruning, setPruning]       = useState(false);
   const [prunePreview, setPrunePreview] = useState<PrunePreview | null>(null);
@@ -188,6 +189,40 @@ export default function ConsolePage() {
       else alert(`Backup failed: ${data.error}`);
     } catch { alert("Failed to backup database."); }
     finally { setBacking(false); }
+  }
+
+  /**
+   * Download a snapshot of the live DB, for carrying to another machine.
+   *
+   * Goes through fetch rather than pointing the browser straight at the URL
+   * so a JSON error body still surfaces as a message instead of the browser
+   * silently "downloading" the error. The filename comes from the server's
+   * Content-Disposition header.
+   */
+  async function exportDatabase() {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/console/backups/export");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(`Export failed: ${data.error ?? res.status}`);
+        return;
+      }
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      const filename = match ? match[1] : "newsixity-export.db";
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch { alert("Failed to export database."); }
+    finally { setExporting(false); }
   }
 
   async function loadPrunePreview(threshold: number = 0) {
@@ -315,6 +350,17 @@ export default function ConsolePage() {
                 <div className="con-backup-note">Keeps 2 most recent</div>
               </div>
               <div className="con-backup-card">
+                <div className="con-backup-card-title">Export / Transfer</div>
+                <button className="con-btn con-btn-green" onClick={exportDatabase} disabled={exporting}
+                  style={{ width: "100%", marginTop: 2 }}>
+                  {exporting ? "Exporting…" : "⬇ Export Database"}
+                </button>
+                <div className="con-backup-note">
+                  Downloads the current database as one file — copy it to another
+                  computer and restore it there.
+                </div>
+              </div>
+              <div className="con-backup-card">
                 <div className="con-backup-card-title">Auto Backup</div>
                 <div className="con-backup-list">
                   ● Daily at 3 AM<br />
@@ -326,11 +372,21 @@ export default function ConsolePage() {
             </div>
 
             <details className="con-details" style={{ marginTop: 6 }}>
-              <summary>📖 How to restore from backup</summary>
-              <pre>{`# Stop the app, then:
-cp data/newsixity.db data/newsixity.db.old
-cp data/backups/newsixity-YYYY-MM-DD....db data/newsixity.db
-# Restart the app`}</pre>
+              <summary>📖 Moving your database to another computer</summary>
+              <pre>{`1. Here:  click "Export Database" and save the .db file.
+2. Copy that file to the other computer.
+3. There: upload it to the restore endpoint —
+
+   curl --data-binary @newsixity-export-....db \\
+        -H "Content-Type: application/octet-stream" \\
+        http://127.0.0.1:8000/api/console/backups/restore
+
+   It is checked for integrity before anything is replaced,
+   and only applied when you quit and reopen the app. Your
+   previous database is kept as data/backups/pre-restore-*.db.
+
+Or restore a backup already on this machine by name:
+   curl -X POST ".../api/console/backups/restore?name=<file>.db"`}</pre>
             </details>
           </div>
         </div>

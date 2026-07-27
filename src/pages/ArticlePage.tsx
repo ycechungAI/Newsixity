@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Article } from "@/types";
 import { formatDate } from "@/lib/utils/date";
-import { isVideoUrl, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem, type PlaylistPagination } from "@/lib/utils/video";
+import { isVideoUrl, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import ArticleSummary from "@/components/articles/ArticleSummary";
 import VideoEmbed from "@/components/articles/VideoEmbed";
@@ -15,12 +15,6 @@ export default function ArticlePage() {
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>([]);
-  const [playlistPagination, setPlaylistPagination] = useState<PlaylistPagination>({
-    currentPage: 1,
-    pageSize: 10,
-    totalItems: 0,
-    totalPages: 0,
-  });
 
   const articleId = idParam ? parseInt(idParam, 10) : NaN;
   const invalidId = !idParam || isNaN(articleId);
@@ -62,10 +56,10 @@ export default function ArticlePage() {
     if (!videoInfo?.playlistId) return;
 
     let cancelled = false;
-    fetchYouTubePlaylist(videoInfo.playlistId, { page: 1, pageSize: 10 }).then((result) => {
+    // One fetch returns the whole playlist; VideoEmbed pages it for display.
+    fetchYouTubePlaylist(videoInfo.playlistId).then((result) => {
       if (cancelled) return;
       setPlaylistItems(result.items);
-      setPlaylistPagination(result.pagination);
     });
     return () => { cancelled = true; };
   }, [article]);
@@ -111,7 +105,8 @@ export default function ArticlePage() {
             url={safeArticleLink}
             title={article.title}
             playlistItems={playlistItems}
-            playlistPagination={playlistPagination}
+            shared
+            slotKey={String(article.id)}
           />
         )}
         {isManualWebPage && <WebPageEmbed url={safeArticleLink} title={article.title} />}
