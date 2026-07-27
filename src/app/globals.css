@@ -2489,3 +2489,111 @@ select {
   color: var(--subtle);
   flex-shrink: 0;
 }
+
+/* ── Weather timeline ─────────────────────────────────────────────────── */
+.wx-timeline {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px 6px;
+  margin-bottom: 10px;
+  background: var(--card-bg, transparent);
+}
+.wx-timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.wx-timeline-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.wx-timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wx-timeline-select {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.wx-timeline-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.wx-timeline-btn:hover { color: var(--text); }
+.wx-timeline-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* Keeps its aspect ratio, so markers and axis text are never distorted. */
+.wx-timeline-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: none;   /* let pointermove drive the crosshair on touch */
+}
+.wx-timeline-band {
+  fill: var(--accent);
+  opacity: 0.13;
+  stroke: none;
+}
+.wx-timeline-line {
+  fill: none;
+  stroke-width: 1.6;
+}
+.wx-timeline-max { stroke: #f97316; }
+.wx-timeline-wind { stroke: #a78bfa; }
+.wx-timeline-bar { fill: #38bdf8; opacity: 0.7; }
+.wx-timeline-bar.is-hover { opacity: 1; }
+.wx-timeline-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.45;
+}
+.wx-timeline-crosshair {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.wx-timeline-dot { stroke: none; }
+.wx-timeline-dot-max { fill: #f97316; }
+.wx-timeline-dot-min { fill: #60a5fa; }
+.wx-timeline-dot-wind { fill: #a78bfa; }
+.wx-timeline-readout {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.wx-timeline-unit { color: var(--text-muted); }
+.wx-timeline-min { stroke: #60a5fa; }
+.wx-timeline-axis {
+  fill: var(--text-muted);
+  font-size: 9px;
+}
+.wx-timeline-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.wx-timeline-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 14px 0;
+  text-align: center;
+}
