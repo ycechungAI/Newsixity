@@ -36,6 +36,7 @@ interface Rect {
 
 const DOCK_WIDTH_KEY = "newsixity.video.dockWidthPct";
 const FLOAT_WIDTH_KEY = "newsixity.video.floatWidth";
+const FLOAT_POS_KEY = "newsixity.video.floatPos";
 const MIN_DOCK_PCT = 40;
 const MAX_DOCK_PCT = 100;
 const MIN_FLOAT_WIDTH = 240;
@@ -66,6 +67,9 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
   const [rect, setRect] = useState<Rect | null>(null);
   const [dockWidthPct, setDockWidthPctState] = useState(100);
   const [floatWidth, setFloatWidth] = useState(400);
+  /** Floating-window position in px from the top-left. null keeps the
+   *  default bottom-right anchor until the user drags it somewhere. */
+  const [floatPos, setFloatPos] = useState<{ x: number; y: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
@@ -77,7 +81,67 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setDockWidthPctState(readStored(DOCK_WIDTH_KEY, 100, MIN_DOCK_PCT, MAX_DOCK_PCT));
     setFloatWidth(readStored(FLOAT_WIDTH_KEY, 400, MIN_FLOAT_WIDTH, MAX_FLOAT_WIDTH));
+    try {
+      const raw = localStorage.getItem(FLOAT_POS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (typeof p?.x === "number" && typeof p?.y === "number") setFloatPos(p);
+      }
+    } catch {
+      // Corrupt value; fall back to the default anchor.
+    }
   }, []);
+
+  /** Keep the window fully on screen — after a drag, and after a resize of
+   *  the app window, which could otherwise strand it off-canvas. */
+  const clampToViewport = useCallback((x: number, y: number) => {
+    const el = containerRef.current;
+    const w = el?.offsetWidth ?? floatWidth;
+    const h = el?.offsetHeight ?? floatWidth * 9 / 16;
+    return {
+      x: Math.min(Math.max(x, 0), Math.max(window.innerWidth - w, 0)),
+      y: Math.min(Math.max(y, 0), Math.max(window.innerHeight - h, 0)),
+    };
+  }, [floatWidth]);
+
+  /** Drag the floating window by its title bar. */
+  const startFloatDrag = useCallback(
+    (event: React.PointerEvent) => {
+      // Ignore drags that start on a control, or the buttons stop working.
+      if ((event.target as HTMLElement).closest("button")) return;
+      event.preventDefault();
+
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const grabX = event.clientX - rect.left;
+      const grabY = event.clientY - rect.top;
+
+      const onMove = (e: PointerEvent) => {
+        setFloatPos(clampToViewport(e.clientX - grabX, e.clientY - grabY));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setFloatPos((p) => {
+          if (p) localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(p));
+          return p;
+        });
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [clampToViewport]
+  );
+
+  // Re-clamp when the app window shrinks, so the player can't end up
+  // stranded outside the viewport with no way to drag it back.
+  useEffect(() => {
+    if (!floating) return;
+    const onResize = () => setFloatPos((p) => (p ? clampToViewport(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [floating, clampToViewport]);
 
   const setDockWidthPct = useCallback((pct: number) => {
     const clamped = Math.min(MAX_DOCK_PCT, Math.max(MIN_DOCK_PCT, pct));
@@ -271,8 +335,11 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
       }
     : {
         position: "fixed",
-        right: 16,
-        bottom: 16,
+        // Once dragged, pin by top/left. Until then keep the bottom-right
+        // anchor so the window stays put as the viewport resizes.
+        ...(floatPos
+          ? { top: floatPos.y, left: floatPos.x }
+          : { right: 16, bottom: 16 }),
         width: floatWidth,
         height: Math.round((floatWidth * 9) / 16) + 28,
       };
@@ -288,7 +355,11 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
         >
           <div ref={playerRef} className="video-host-player">
             {floating && (
-              <div className="video-host-bar">
+              <div
+                className="video-host-bar"
+                onPointerDown={startFloatDrag}
+                title="Drag to move"
+              >
                 <span className="video-host-title" title={active.title}>
                   {active.title}
                 </span>

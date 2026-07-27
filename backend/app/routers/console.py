@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -242,6 +243,51 @@ async def export_live_database():
         media_type="application/octet-stream",
         filename=export_filename(),
         background=BackgroundTask(lambda: tmp_path.unlink(missing_ok=True)),
+    )
+
+
+@router.post(
+    "/console/backups/export-to-disk",
+    dependencies=[Depends(rate_limit("console-backups-export-disk", 10, ONE_HOUR_MS))],
+)
+async def export_database_to_disk() -> JSONResponse:
+    """Write a snapshot to the user's Downloads folder and return the path.
+
+    The streaming download at /console/backups/export works in a browser but
+    not in the packaged app: a blob + `<a download>` is a no-op in Tauri's
+    WKWebView, so the Export button appeared to do nothing once installed.
+    Writing server-side sidesteps the webview entirely — the backend and the
+    filesystem are on the same machine for this app, so there is nothing to
+    transfer.
+    """
+    try:
+        tmp_path = await asyncio.to_thread(export_live_snapshot)
+    except BackupValidationError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status_code)
+    except Exception as e:  # noqa: BLE001
+        logger.error("[Newsixity] Database export failed: %s", e)
+        return JSONResponse({"error": "Export failed"}, status_code=500)
+
+    downloads = Path.home() / "Downloads"
+    target_dir = downloads if downloads.is_dir() else Path.home()
+    target = target_dir / export_filename()
+
+    try:
+        await asyncio.to_thread(shutil.move, str(tmp_path), str(target))
+    except Exception as e:  # noqa: BLE001
+        tmp_path.unlink(missing_ok=True)
+        logger.error("[Newsixity] Could not write export to %s: %s", target, e)
+        return JSONResponse(
+            {"error": f"Could not write to {target_dir}: {e}"}, status_code=500
+        )
+
+    return JSONResponse(
+        {
+            "success": True,
+            "path": str(target),
+            "size": target.stat().st_size,
+            "message": f"Database exported to {target}",
+        }
     )
 
 
