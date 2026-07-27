@@ -26,6 +26,21 @@ interface CategoryWithCounts extends Category {
 
 export default function SavedPage() {
   const [articles, setArticles] = useState<Article[]>([]);
+
+  // Remove a deleted article from this list immediately. ArticleCard hides
+  // its own instance, but the same article can be on screen in another view
+  // (and in the sidebar counts) — leaving it there reads as "delete did
+  // nothing".
+  useEffect(() => {
+    const onDeleted = (e: Event) => {
+      const id = (e as CustomEvent<{ id: number }>).detail?.id;
+      if (id == null) return;
+      setArticles((prev) => prev.filter((a) => a.id !== id));
+    };
+    window.addEventListener("article-deleted", onDeleted);
+    return () => window.removeEventListener("article-deleted", onDeleted);
+  }, []);
+
   const [categories, setCategories] = useState<CategoryWithCounts[]>([]);
   const [viewMode, setViewMode] = useState<SavedViewMode>("cards");
   const [currentPage, setCurrentPage] = useState(1);
