@@ -8,6 +8,9 @@ import { useVideoPlayer, useVideoSlot } from "@/lib/video/playerContext";
  *  purely how much of it is shown at once. */
 const PLAYLIST_PAGE_SIZE = 15;
 
+/** Remembers the autoplay-next choice across navigation and restarts. */
+const AUTOPLAY_KEY = "newsixity.video.autoplayNext";
+
 const SIZE_PRESETS = [
   { label: "S", pct: 50 },
   { label: "M", pct: 75 },
@@ -45,6 +48,29 @@ export default function VideoEmbed({
 
   const { dockWidthPct, setDockWidthPct } = useVideoPlayer();
 
+  /** Continue to the next playlist entry when one finishes. Persisted, so
+   *  the choice survives navigation and restarts. */
+  const [autoplayNext, setAutoplayNext] = useState(() => {
+    try {
+      return localStorage.getItem(AUTOPLAY_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleAutoplay = useCallback(() => {
+    setAutoplayNext((on) => {
+      const next = !on;
+      try {
+        localStorage.setItem(AUTOPLAY_KEY, next ? "1" : "0");
+      } catch {
+        // Private mode / storage disabled — the toggle still works for
+        // this session.
+      }
+      return next;
+    });
+  }, []);
+
   /**
    * A playlist-only link (youtube.com/playlist?list=...) has no video id, so
    * extractVideoInfo falls back to an /embed/videoseries?list=... URL. That
@@ -67,6 +93,41 @@ export default function VideoEmbed({
     setCurrentTitle(first.title);
     setActiveVideoId(first.videoId);
   }, [activeVideoId, playlistItems, videoInfo?.playlistId]);
+
+  /**
+   * Advance to the next playlist entry when the current one finishes.
+   *
+   * The host owns playback and reports the end (YouTube's postMessage
+   * playerState 0, or the native `ended` event for direct files); only this
+   * component knows what "next" means, so the decision lives here.
+   *
+   * autoplay=1 is required on the next URL — without it the embed loads the
+   * video but waits for a click, which would stall the chain after one
+   * video. Pausing does not fire "ended", so a user pause stops the chain
+   * naturally, as does switching the toggle off.
+   */
+  useEffect(() => {
+    if (!autoplayNext || !playlistItems?.length) return;
+
+    const onEnded = () => {
+      const index = playlistItems.findIndex((i) => i.videoId === activeVideoId);
+      const next = index >= 0 ? playlistItems[index + 1] : undefined;
+      if (!next) return;  // End of the playlist — stop rather than loop.
+
+      const list = videoInfo?.playlistId ? `&list=${videoInfo.playlistId}` : "";
+      setCurrentEmbedUrl(
+        `https://www.youtube.com/embed/${next.videoId}?autoplay=1${list}`
+      );
+      setCurrentTitle(next.title);
+      setActiveVideoId(next.videoId);
+
+      // Keep the visible page in step, so the highlighted entry stays on screen.
+      setPlaylistPage(Math.floor((index + 1) / PLAYLIST_PAGE_SIZE));
+    };
+
+    window.addEventListener("video-ended", onEnded);
+    return () => window.removeEventListener("video-ended", onEnded);
+  }, [autoplayNext, playlistItems, activeVideoId, videoInfo?.playlistId]);
 
   const isAnimex = videoInfo?.type === "animex";
   const isDirect = videoInfo?.type === "direct";
@@ -211,7 +272,19 @@ export default function VideoEmbed({
         return (
           <div className="vid-playlist">
             <div className="vid-playlist-title">
-              Playlist ({playlistItems.length} videos)
+              <span>Playlist ({playlistItems.length} videos)</span>
+              <button
+                className={`vid-autoplay-btn${autoplayNext ? " active" : ""}`}
+                onClick={toggleAutoplay}
+                aria-pressed={autoplayNext}
+                title={
+                  autoplayNext
+                    ? "Autoplay is on — the next video starts automatically. Pausing stops it."
+                    : "Autoplay is off — videos stop at the end."
+                }
+              >
+                {autoplayNext ? "⏭ Autoplay on" : "⏭ Autoplay off"}
+              </button>
             </div>
             <ol>
               {pageItems.map((item, i) => (
