@@ -102,6 +102,13 @@ Watch for:
 
 ## 4. Carry-overs from v0.3
 
+- **Topics view has no per-article controls.** ArticleGroup renders only an
+  expand button — no delete, save, or mark-read — while Cards/List/Sources/
+  Timeline all use ArticleCard and have the full set. Topics is the default
+  on every tab except Others, so a user who never switches views has no way
+  to delete anything. Adding per-article controls inside a group is a design
+  question (do they act on the representative article or the whole group?),
+  which is why it was not patched in alongside the delete fixes.
 - **Hourly weather scheduler** — observations are currently recorded when a
   forecast is viewed, which covers normal use but not a machine left idle.
 - **Rebuild the desktop app** after any backend change:
