@@ -250,27 +250,109 @@ class TestCollectLockups:
             "contents": [_lockup("aaa", "First")],
             "continuations": {"continuationCommand": {"token": "TOKEN123"}},
         }
-        assert _collect_lockups(tree, [], set()) == "TOKEN123"
+        # A list, not a bare token: a page carries several and only one works.
+        assert _collect_lockups(tree, [], set()) == ["TOKEN123"]
 
-    def test_returns_none_when_no_continuation(self):
-        assert _collect_lockups({"contents": [_lockup("aaa", "x")]}, [], set()) is None
+    def test_returns_empty_list_when_no_continuation(self):
+        assert _collect_lockups({"contents": [_lockup("aaa", "x")]}, [], set()) == []
 
     def test_falls_back_to_placeholder_title(self):
         items: list[PlaylistItem] = []
         _collect_lockups({"lockupViewModel": {"contentId": "aaa"}}, items, set())
         assert items[0].title == "Untitled"
 
-    def test_yields_nothing_for_the_old_renderer_key(self):
-        """Regression guard for the rename that silently broke scraping.
+    def test_reads_the_playlistVideoRenderer_shape(self):
+        """Both entry shapes must work — the flip is not one-directional.
 
-        YouTube renamed playlistVideoRenderer -> lockupViewModel. Callers
-        rely on an empty result meaning "shape changed, fall back to RSS",
-        so the old key must not be quietly accepted.
+        This previously asserted the opposite: that playlistVideoRenderer
+        yields nothing, because YouTube had moved to lockupViewModel. It has
+        since moved back, which silently reduced every playlist to the
+        15-item RSS fallback. Supporting only whichever key is live today
+        guarantees a repeat, so both are read.
         """
-        tree = {"contents": [{"playlistVideoRenderer": {"videoId": "aaa"}}]}
+        tree = {
+            "contents": [
+                {
+                    "playlistVideoRenderer": {
+                        "videoId": "aaa",
+                        "title": {"runs": [{"text": "Renderer Title"}]},
+                    }
+                }
+            ]
+        }
         items: list[PlaylistItem] = []
-        assert _collect_lockups(tree, items, set()) is None
-        assert items == []
+        assert _collect_lockups(tree, items, set()) == []
+        assert [(i.video_id, i.title) for i in items] == [("aaa", "Renderer Title")]
+
+    def test_reads_both_shapes_in_one_tree_without_duplicating(self):
+        tree = {
+            "contents": [
+                _lockup("aaa", "From lockup"),
+                {
+                    "playlistVideoRenderer": {
+                        "videoId": "bbb",
+                        "title": {"runs": [{"text": "From renderer"}]},
+                    }
+                },
+                # Same id via the other shape — must not be added twice.
+                {
+                    "playlistVideoRenderer": {
+                        "videoId": "aaa",
+                        "title": {"runs": [{"text": "Duplicate"}]},
+                    }
+                },
+            ]
+        }
+        items: list[PlaylistItem] = []
+        _collect_lockups(tree, items, set())
+        assert [i.video_id for i in items] == ["aaa", "bbb"]
+
+    def test_renderer_title_falls_back_to_simpleText(self):
+        tree = {
+            "contents": [
+                {"playlistVideoRenderer": {"videoId": "aaa",
+                                           "title": {"simpleText": "Simple"}}}
+            ]
+        }
+        items: list[PlaylistItem] = []
+        _collect_lockups(tree, items, set())
+        assert items[0].title == "Simple"
+
+    def test_titles_are_html_unescaped(self):
+        """Titles arrive escaped; "&amp;" reaching the UI is a visible bug."""
+        tree = {
+            "contents": [
+                {"playlistVideoRenderer": {"videoId": "aaa",
+                                           "title": {"runs": [{"text": "Batman &amp; Robin"}]}}}
+            ]
+        }
+        items: list[PlaylistItem] = []
+        _collect_lockups(tree, items, set())
+        assert items[0].title == "Batman & Robin"
+
+    def test_collects_every_continuation_token_not_just_the_last(self):
+        """A playlist page carries several tokens and only one works.
+
+        The dead one lives under continuationEndpoint and answers 200 with an
+        empty body; the live one is under commands. Keeping only the
+        last-seen token picked the dead one and pagination stopped at 100
+        items with no error.
+        """
+        tree = {
+            "contents": [_lockup("aaa", "First")],
+            "a": {"continuationEndpoint": {"continuationCommand": {"token": "DEAD"}}},
+            "b": {"commands": [{"continuationCommand": {"token": "LIVE"}}]},
+        }
+        items: list[PlaylistItem] = []
+        tokens = _collect_lockups(tree, items, set())
+        assert set(tokens) == {"DEAD", "LIVE"}, tokens
+
+    def test_duplicate_tokens_are_not_repeated(self):
+        tree = {
+            "x": {"continuationCommand": {"token": "SAME"}},
+            "y": {"continuationCommand": {"token": "SAME"}},
+        }
+        assert _collect_lockups(tree, [], set()) == ["SAME"]
 
     def test_survives_deeply_nested_payloads(self):
         """The walk is iterative; deep nesting must not hit the recursion limit."""

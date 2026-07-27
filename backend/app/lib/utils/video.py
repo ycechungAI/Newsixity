@@ -8,13 +8,14 @@ See ``fetch_youtube_playlist`` for what replaced it.
 
 from __future__ import annotations
 
+import html as html_module
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -198,8 +199,8 @@ PLAYLIST_USER_AGENT = (
 # The first page load yields 100 items and each continuation round ~100 more.
 # Bound both the total and the wall-clock spend so one enormous playlist
 # can't stall the request.
-PLAYLIST_MAX_ITEMS = 500
-PLAYLIST_TIME_BUDGET_SECONDS = 25
+PLAYLIST_MAX_ITEMS = 1000
+PLAYLIST_TIME_BUDGET_SECONDS = 60
 PLAYLIST_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 # playlist_id -> (expires_at_monotonic, payload). Scraping pulls ~2 MB per
@@ -233,39 +234,87 @@ def _guarded_get(url: str, **kwargs: Any) -> httpx.Response:
     return response
 
 
-def _collect_lockups(root: Any, items: list[PlaylistItem], seen: set[str]) -> Optional[str]:
+def _lockup_entry(node: dict) -> Optional[tuple[str, str]]:
+    """Read a ``lockupViewModel`` entry -> (video_id, title), if it is one."""
+    lockup = node.get("lockupViewModel")
+    if not isinstance(lockup, dict):
+        return None
+    video_id = lockup.get("contentId")
+    if not video_id:
+        return None
+    title = lockup.get("metadata", {}).get("lockupMetadataViewModel", {}).get("title", {})
+    title_text = title.get("content") if isinstance(title, dict) else None
+    return video_id, title_text or "Untitled"
+
+
+def _renderer_entry(node: dict) -> Optional[tuple[str, str]]:
+    """Read a ``playlistVideoRenderer`` entry -> (video_id, title), if it is one.
+
+    Title here is a runs-list ({"runs": [{"text": ...}]}) rather than the
+    flat ``content`` string lockupViewModel uses.
+    """
+    renderer = node.get("playlistVideoRenderer")
+    if not isinstance(renderer, dict):
+        return None
+    video_id = renderer.get("videoId")
+    if not video_id:
+        return None
+
+    title = renderer.get("title")
+    title_text = None
+    if isinstance(title, dict):
+        runs = title.get("runs")
+        if isinstance(runs, list) and runs:
+            title_text = "".join(r.get("text", "") for r in runs if isinstance(r, dict))
+        elif isinstance(title.get("simpleText"), str):
+            title_text = title["simpleText"]
+    return video_id, title_text or "Untitled"
+
+
+def _collect_lockups(
+    root: Any, items: list[PlaylistItem], seen: set[str]
+) -> list[str]:
     """Walk a ytInitialData/InnerTube tree, appending videos in document order.
 
-    Returns the continuation token for the next page, if present.
+    Returns **every** continuation token found, in document order, because
+    more than one is present and they are not equivalent. A playlist page
+    carries a token under ``continuationEndpoint`` that returns an empty
+    response, alongside one under ``commands`` that returns the next 100
+    videos. Keeping only the last-seen token picked the dead one and
+    pagination stopped silently at 100 items.
 
-    Playlist entries live under ``lockupViewModel``. YouTube renamed this
-    from ``playlistVideoRenderer`` — every older scraper keys off that name
-    and now finds nothing — so callers must treat an empty result as "the
-    shape changed" and fall back, not as "the playlist is empty".
+    The caller tries each in turn and keeps the first that yields videos,
+    rather than hardcoding a path that YouTube will reshuffle again.
+
+    Reads BOTH entry shapes, and that is deliberate. YouTube has served this
+    page as ``playlistVideoRenderer``, then ``lockupViewModel``, then
+    ``playlistVideoRenderer`` again — the flip is not a one-way migration,
+    it looks like an A/B test, and a scraper keyed to whichever one was live
+    at the time silently collects nothing when it flips back. That failure
+    is invisible: the walk succeeds and simply returns zero items.
+
+    Callers must still treat an empty result as "the shape changed" and fall
+    back, rather than as "the playlist is empty".
 
     Iterative rather than recursive: these trees nest deeply enough to risk
     the interpreter's recursion limit.
     """
-    continuation: Optional[str] = None
+    tokens: list[str] = []
     stack: list[Any] = [root]
 
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
-            lockup = node.get("lockupViewModel")
-            if isinstance(lockup, dict):
-                video_id = lockup.get("contentId")
-                title = (
-                    lockup.get("metadata", {})
-                    .get("lockupMetadataViewModel", {})
-                    .get("title", {})
-                )
-                title_text = title.get("content") if isinstance(title, dict) else None
-                if video_id and video_id not in seen:
+            entry = _lockup_entry(node) or _renderer_entry(node)
+            if entry:
+                video_id, title_text = entry
+                if video_id not in seen:
                     seen.add(video_id)
                     items.append(
                         PlaylistItem(
-                            title=title_text or "Untitled",
+                            # Titles arrive HTML-escaped ("Batman &amp; Robin");
+                            # unescape once here so every caller gets clean text.
+                            title=html_module.unescape(title_text),
                             video_id=video_id,
                             url=f"https://www.youtube.com/watch?v={video_id}",
                         )
@@ -273,14 +322,16 @@ def _collect_lockups(root: Any, items: list[PlaylistItem], seen: set[str]) -> Op
 
             command = node.get("continuationCommand")
             if isinstance(command, dict) and command.get("token"):
-                continuation = command["token"]
+                tok = command["token"]
+                if tok not in tokens:
+                    tokens.append(tok)
 
             # Reversed so popping off the stack preserves document order.
             stack.extend(reversed(list(node.values())))
         elif isinstance(node, list):
             stack.extend(reversed(node))
 
-    return continuation
+    return tokens
 
 
 def _extract_initial_data(html: str) -> Optional[dict]:
@@ -362,7 +413,7 @@ def fetch_youtube_playlist(playlist_id: str) -> dict:
             f"https://www.youtube.com/playlist?list={playlist_id}"
         ).text
         data = _extract_initial_data(html)
-        token = _collect_lockups(data, items, seen) if data else None
+        tokens = _collect_lockups(data, items, seen) if data else []
 
         if not items:
             # Either the playlist really is empty or, far more likely,
@@ -374,32 +425,49 @@ def fetch_youtube_playlist(playlist_id: str) -> dict:
             )
             items = _fetch_playlist_rss(playlist_id)
             source = "rss" if items else "none"
-        elif token:
+        elif tokens:
             api_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
             client_version = re.search(r'"INNERTUBE_CLIENT_VERSION":"([^"]+)"', html)
             if api_key and client_version:
+                tried: set[str] = set()
+
                 while (
-                    token
+                    tokens
                     and len(items) < PLAYLIST_MAX_ITEMS
                     and time.monotonic() < deadline
                 ):
-                    try:
-                        page = _fetch_continuation(
-                            api_key.group(1), client_version.group(1), token
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        # Best-effort: keep whatever earlier rounds collected.
-                        logger.warning(
-                            "Playlist %s: continuation failed after %d items: %s",
-                            playlist_id,
-                            len(items),
-                            exc,
-                        )
-                        break
-                    before = len(items)
-                    token = _collect_lockups(page, items, seen)
-                    if len(items) == before:
-                        break  # No progress; stop rather than loop forever.
+                    # A page offers several tokens and only one of them
+                    # actually returns videos; the others answer 200 with an
+                    # empty body. Try each until one makes progress.
+                    progressed = False
+                    for token in tokens:
+                        if token in tried:
+                            continue
+                        tried.add(token)
+                        try:
+                            page = _fetch_continuation(
+                                api_key.group(1), client_version.group(1), token
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            # Best-effort: keep whatever earlier rounds got.
+                            logger.warning(
+                                "Playlist %s: continuation failed after %d items: %s",
+                                playlist_id,
+                                len(items),
+                                exc,
+                            )
+                            continue
+
+                        before = len(items)
+                        next_tokens = _collect_lockups(page, items, seen)
+                        if len(items) > before:
+                            tokens = next_tokens
+                            progressed = True
+                            break
+
+                    if not progressed:
+                        break  # Nothing left that yields videos.
+
                 del items[PLAYLIST_MAX_ITEMS:]
     except Exception as exc:  # noqa: BLE001
         logger.warning("Playlist %s: fetch failed: %s", playlist_id, exc)
