@@ -2,7 +2,12 @@ import { useState, useEffect, useRef, ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 function isSystemMessage(text: string): boolean {
-  return /\033\[(92m|93m|91m)/g.test(text);
+  // \x1b, not \033: octal escapes are a syntax error under TypeScript's
+  // stricter parsing, and both denote the same ESC character.
+  // no-control-regex guards against control characters appearing by
+  // accident; matching ANSI colour codes requires ESC deliberately.
+  // eslint-disable-next-line no-control-regex
+  return /\x1b\[(92m|93m|91m)/.test(text);
 }
 
 function parseAnsiColors(text: string): ReactNode[] {
@@ -84,6 +89,10 @@ interface PrunePreview {
   prunable_by_strategy: {
     duplicates: number;
     old_articles: number;
+    /** Articles scoring under the chosen threshold — returned by
+     *  GET /api/prune/preview but previously missing from this type, which
+     *  is why the two usages below were type errors. */
+    below_threshold: number;
     total: number;
   };
   preview_ids: number[];

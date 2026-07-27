@@ -94,3 +94,39 @@ class TestApiUnaffected:
         resp = client.get("/api/health")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/json")
+
+
+class TestUnknownApiPathsFailLoudly:
+    """A missing /api/* route must 404 as JSON, not serve the SPA shell.
+
+    This is the structural fix for the v0.3 bug class. Falling through to
+    index.html returned status 200, so a frontend calling a nonexistent
+    endpoint saw res.ok === true and only failed on res.json() — usually
+    inside a catch that swallowed it, leaving the feature silently empty
+    with nothing in any log. Four features shipped broken that way.
+    """
+
+    # The module-level client uses http://testserver, which the admin
+    # middleware does not treat as loopback — /api/* would 401 before ever
+    # reaching the 404. A loopback Host is what a real browser sends here.
+    local = TestClient(app, base_url="http://localhost")
+
+    def test_unknown_api_path_returns_json_404(self):
+        resp = self.local.get("/api/definitely/not/a/route")
+        assert resp.status_code == 404
+        assert resp.headers["content-type"].startswith("application/json")
+        assert "error" in resp.json()
+
+    def test_unknown_api_path_does_not_return_the_spa(self):
+        resp = self.local.get("/api/nope")
+        assert "<!doctype html" not in resp.text.lower()
+
+    def test_real_api_routes_are_unaffected(self):
+        assert self.local.get("/api/health").status_code == 200
+
+    def test_client_side_routes_still_get_the_spa(self):
+        """The SPA fallback must survive — these are React Router paths."""
+        for path in ("/finance", "/article/123", "/weather", "/search"):
+            resp = client.get(path)
+            assert resp.status_code == 200, path
+            assert resp.headers["content-type"].startswith("text/html"), path
