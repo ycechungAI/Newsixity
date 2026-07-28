@@ -384,7 +384,7 @@ def _fetch_playlist_rss(playlist_id: str) -> list[PlaylistItem]:
     return items
 
 
-def fetch_youtube_playlist(playlist_id: str) -> dict:
+def fetch_youtube_playlist(playlist_id: str, force_refresh: bool = False) -> dict:
     """Fetch a YouTube playlist's full contents.
 
     Returns ``{"items": [...], "totalItems": int, "source": str}`` where
@@ -399,8 +399,14 @@ def fetch_youtube_playlist(playlist_id: str) -> dict:
     if not PLAYLIST_ID_RE.match(playlist_id or ""):
         return {"items": [], "totalItems": 0, "source": "none"}
 
+    # force_refresh exists because the cache is keyed only by playlist id and
+    # lives in this process: once a playlist is cached, edits made on YouTube
+    # (adding or removing a video) stay invisible for the whole TTL. Deleting
+    # and re-adding the article does not help — that only changes a database
+    # row, while the fetch still hits the same cache key. The user needs a way
+    # to say "go look again".
     cached = _playlist_cache.get(playlist_id)
-    if cached and cached[0] > time.monotonic():
+    if cached and cached[0] > time.monotonic() and not force_refresh:
         return cached[1]
 
     items: list[PlaylistItem] = []

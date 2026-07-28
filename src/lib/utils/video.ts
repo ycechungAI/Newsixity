@@ -194,12 +194,19 @@ export interface PlaylistResult {
  * The backend returns every video in one response (see
  * backend/app/lib/utils/video.py); callers paginate for display.
  */
-export async function fetchYouTubePlaylist(playlistId: string): Promise<PlaylistResult> {
+export async function fetchYouTubePlaylist(
+  playlistId: string,
+  /** Re-scrape instead of using the backend's 6-hour cache. Needed after
+   *  the playlist is edited on YouTube, since the cache is keyed by playlist
+   *  id — deleting and re-adding the article does not invalidate it. */
+  refresh = false
+): Promise<PlaylistResult> {
   const empty: PlaylistResult = { items: [], totalItems: 0, source: "none" };
   try {
     const res = await fetch(
-      `/api/videos/playlist?id=${encodeURIComponent(playlistId)}`,
-      { signal: AbortSignal.timeout(30000) }
+      `/api/videos/playlist?id=${encodeURIComponent(playlistId)}${refresh ? "&refresh=true" : ""}`,
+      // A forced re-scrape re-walks every continuation page, so allow longer.
+      { signal: AbortSignal.timeout(refresh ? 90000 : 30000) }
     );
     if (!res.ok) return empty;
     return (await res.json()) as PlaylistResult;

@@ -5,6 +5,7 @@ import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
 import ThemeProvider from "@/components/ThemeProvider";
 import { VideoPlayerProvider } from "@/components/video/VideoPlayerHost";
+import { installExternalLinkHandler } from "@/lib/ui/externalLinks";
 import "./app/globals.css";
 
 interface CategoryWithCounts extends Category {
@@ -26,6 +27,10 @@ export default function App() {
   useEffect(() => {
     fetchCategories();
   }, [fetchCategories]);
+
+  // Off-site links must reach the real browser; in the packaged app's
+  // WKWebView target="_blank" is silently a no-op. See externalLinks.ts.
+  useEffect(() => installExternalLinkHandler(), []);
 
   useEffect(() => {
     window.addEventListener("feeds-refreshed", fetchCategories);
