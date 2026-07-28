@@ -10,37 +10,41 @@ from app.db.session import SessionLocal
 
 
 def get_article_count_by_category() -> list[dict]:
-    """Get total and unread article counts per category."""
+    """Get total and unread article counts per category.
+
+    Counts exactly what ``get_articles_by_category`` will return for that
+    category, because these numbers drive the sidebar badges *and* the page
+    count. Two filters therefore have to match it:
+
+    * **saved articles are excluded** — they live exclusively in the Saved
+      tab, so counting them here inflated every category. Measured on a real
+      database: world-news reported 176 while the list served 85 (91 saved),
+      which showed as 6 pages where only 3 had any articles. Every category
+      was affected.
+    * **sports uses the keyword filter**, matching the list's behaviour.
+    """
     with SessionLocal() as db:
+        # An article counts toward its category only if the list would show
+        # it: not saved, and for sports only when it matches a keyword.
+        counts_toward_category = and_(
+            ArticleModel.is_saved == 0,
+            or_(
+                CategoryModel.slug != "sports",
+                or_(*[ArticleModel.title.ilike(kw) for kw in SPORTS_KEYWORDS]),
+            ),
+        )
+
         rows = db.execute(
             select(
                 CategoryModel.slug,
                 func.count(
-                    case(
-                        (
-                            and_(
-                                CategoryModel.slug == "sports",
-                                or_(*[ArticleModel.title.ilike(kw) for kw in SPORTS_KEYWORDS]),
-                            ),
-                            ArticleModel.id,
-                        ),
-                        else_=case((CategoryModel.slug != "sports", ArticleModel.id)),
-                    )
+                    case((counts_toward_category, ArticleModel.id))
                 ).label("total"),
                 func.sum(
                     case(
                         (
-                            ArticleModel.is_read == 0,
-                            case(
-                                (
-                                    and_(
-                                        CategoryModel.slug == "sports",
-                                        or_(*[ArticleModel.title.ilike(kw) for kw in SPORTS_KEYWORDS]),
-                                    ),
-                                    1,
-                                ),
-                                else_=case((CategoryModel.slug != "sports", 1)),
-                            ),
+                            and_(counts_toward_category, ArticleModel.is_read == 0),
+                            1,
                         ),
                         else_=0,
                     )
