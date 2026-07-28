@@ -31,6 +31,8 @@ interface VideoEmbedProps {
   shared?: boolean;
   /** Identity for the shared player — the article id. */
   slotKey?: string;
+  /** Re-scrape the playlist, bypassing the backend's 6-hour cache. */
+  onRefreshPlaylist?: () => Promise<void>;
 }
 
 export default function VideoEmbed({
@@ -39,12 +41,14 @@ export default function VideoEmbed({
   playlistItems,
   shared = false,
   slotKey,
+  onRefreshPlaylist,
 }: VideoEmbedProps) {
   const videoInfo = extractVideoInfo(url);
   const [currentEmbedUrl, setCurrentEmbedUrl] = useState(videoInfo?.embedUrl ?? "");
   const [currentTitle, setCurrentTitle] = useState(title ?? "");
   const [activeVideoId, setActiveVideoId] = useState(videoInfo?.videoId ?? "");
   const [playlistPage, setPlaylistPage] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const { dockWidthPct, setDockWidthPct } = useVideoPlayer();
 
@@ -273,6 +277,28 @@ export default function VideoEmbed({
           <div className="vid-playlist">
             <div className="vid-playlist-title">
               <span>Playlist ({playlistItems.length} videos)</span>
+              {/* The backend caches a playlist for 6 hours keyed by playlist
+                  id, so videos added or removed on YouTube stay invisible —
+                  and deleting the article does not help, because that only
+                  changes a database row. This forces a re-scrape. */}
+              {onRefreshPlaylist && (
+                <button
+                  className="vid-autoplay-btn"
+                  disabled={refreshing}
+                  title="Re-fetch from YouTube (ignores the cached copy)"
+                  onClick={async () => {
+                    setRefreshing(true);
+                    try {
+                      await onRefreshPlaylist();
+                      setPlaylistPage(0);
+                    } finally {
+                      setRefreshing(false);
+                    }
+                  }}
+                >
+                  {refreshing ? "Syncing…" : "↻ Sync"}
+                </button>
+              )}
               <button
                 className={`vid-autoplay-btn${autoplayNext ? " active" : ""}`}
                 onClick={toggleAutoplay}

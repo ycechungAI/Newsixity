@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Article } from "@/types";
 import { formatDate } from "@/lib/utils/date";
@@ -64,6 +64,18 @@ export default function ArticlePage() {
     return () => { cancelled = true; };
   }, [article]);
 
+  /** Re-scrape the playlist, bypassing the backend cache. Passed to
+   *  VideoEmbed so the refresh control sits next to the playlist it
+   *  refreshes. */
+  const refreshPlaylist = useCallback(async () => {
+    if (!article) return;
+    const safeLink = parseHttpUrl(article.link)?.toString() ?? article.link;
+    const info = extractVideoInfo(safeLink);
+    if (!info?.playlistId) return;
+    const result = await fetchYouTubePlaylist(info.playlistId, true);
+    setPlaylistItems(result.items);
+  }, [article]);
+
   if (!invalidId && loading) {
     return (
       <div className="page">
@@ -105,6 +117,7 @@ export default function ArticlePage() {
             url={safeArticleLink}
             title={article.title}
             playlistItems={playlistItems}
+            onRefreshPlaylist={refreshPlaylist}
             shared
             slotKey={String(article.id)}
           />

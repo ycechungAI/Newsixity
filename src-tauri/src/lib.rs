@@ -156,6 +156,20 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
         .title("Newsixity")
         .inner_size(1400.0, 900.0)
         .min_inner_size(900.0, 600.0)
+        // Keep the app on its own origin and hand every outside link to the
+        // system browser. Without this, clicking a YouTube or article link
+        // either did nothing (WKWebView has no handler for target="_blank")
+        // or replaced the app UI with that page and left no way back — this
+        // window has no chrome, no back button, and no address bar.
+        .on_navigation(move |target| {
+            let is_own_origin = target.host_str() == Some("127.0.0.1")
+                && target.port() == Some(port);
+            if is_own_origin {
+                return true;
+            }
+            open_externally(target);
+            false
+        })
         .build()?;
 
     // This is a single-window utility app: closing the window should quit
@@ -170,6 +184,38 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
     });
 
     Ok(())
+}
+
+/// Open a URL in the user's default browser.
+///
+/// Only http/https are ever passed through: the URL arrives from a page the
+/// webview loaded, so treating it as trusted enough to hand to the shell
+/// would let a crafted `file://` or custom-scheme link launch something
+/// unexpected. Spawned, never waited on — a slow browser launch must not
+/// block the UI thread.
+///
+/// Uses the platform command rather than adding a crate: it is three lines
+/// per platform and avoids another dependency in the bundle.
+fn open_externally(url: &tauri::Url) {
+    if !matches!(url.scheme(), "http" | "https") {
+        return;
+    }
+    let target = url.as_str();
+
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(target).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", target])
+        .spawn();
+
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(target).spawn();
+
+    if let Err(e) = result {
+        eprintln!("[Newsixity] Could not open {target} externally: {e}");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

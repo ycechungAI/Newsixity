@@ -17,8 +17,17 @@ router = APIRouter()
     "/videos/playlist",
     dependencies=[Depends(rate_limit("videos-playlist", 60, TEN_MIN_MS))],
 )
-def get_youtube_playlist(id: str = Query(..., description="YouTube playlist id")) -> dict:
-    """Return a playlist's full contents; the client paginates for display."""
+def get_youtube_playlist(
+    id: str = Query(..., description="YouTube playlist id"),
+    refresh: bool = Query(False, description="Bypass the cache and re-scrape"),
+) -> dict:
+    """Return a playlist's full contents; the client paginates for display.
+
+    Results are cached in-process for 6 hours, so a playlist edited on
+    YouTube keeps showing its old contents until that expires — and deleting
+    the article does not help, because the cache is keyed by playlist id, not
+    by article. ``refresh=true`` is the explicit way to re-scrape.
+    """
     if not PLAYLIST_ID_RE.match(id):
         raise HTTPException(status_code=400, detail="Invalid playlist id")
-    return fetch_youtube_playlist(id)
+    return fetch_youtube_playlist(id, force_refresh=refresh)
