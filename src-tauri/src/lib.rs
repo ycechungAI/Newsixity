@@ -31,6 +31,11 @@ const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Path on our own origin that means "open the `url` query parameter in the
+/// system browser". Never served by the backend — the navigation is cancelled
+/// before the request is made. Kept in sync with src/lib/ui/externalLinks.ts.
+const OPEN_EXTERNAL_PATH: &str = "/__newsixity/open-external";
+
 /// Holds the sidecar child process so it can be killed on shutdown.
 /// `None` once killed (or if the backend never started) to make double-kill safe.
 struct BackendProcess(Mutex<Option<Child>>);
@@ -156,19 +161,33 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
         .title("Newsixity")
         .inner_size(1400.0, 900.0)
         .min_inner_size(900.0, 600.0)
-        // Keep the app on its own origin and hand every outside link to the
-        // system browser. Without this, clicking a YouTube or article link
-        // either did nothing (WKWebView has no handler for target="_blank")
-        // or replaced the app UI with that page and left no way back — this
-        // window has no chrome, no back button, and no address bar.
+        // Open a link in the system browser *only* when the frontend asks,
+        // by navigating to OPEN_EXTERNAL_PATH on our own origin.
+        //
+        // This callback is WebKit's decidePolicyForNavigationAction, which
+        // fires for every frame, not just the top one — and it receives only
+        // a URL string, with no way to tell an iframe from a page load. The
+        // previous version treated any off-origin URL as a link click, so
+        // every YouTube embed's own iframe load was cancelled and handed to
+        // the system browser: the video never played and the YouTube app
+        // launched instead, once per load.
+        //
+        // So off-origin navigation is now allowed through — that is what
+        // makes embeds play. Nothing leaves the app implicitly; the request
+        // has to be explicit, and the only thing that makes one is the
+        // external-link handler in src/lib/ui/externalLinks.ts.
         .on_navigation(move |target| {
-            let is_own_origin = target.host_str() == Some("127.0.0.1")
-                && target.port() == Some(port);
-            if is_own_origin {
-                return true;
+            let is_own_origin =
+                target.host_str() == Some("127.0.0.1") && target.port() == Some(port);
+            if is_own_origin && target.path() == OPEN_EXTERNAL_PATH {
+                if let Some(requested) = external_request_target(target) {
+                    open_externally(&requested);
+                }
+                // Cancel: this URL is a signal, not a destination. The page
+                // that asked stays exactly where it is.
+                return false;
             }
-            open_externally(target);
-            false
+            true
         })
         .build()?;
 
@@ -184,6 +203,16 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
     });
 
     Ok(())
+}
+
+/// Pull the requested destination out of an OPEN_EXTERNAL_PATH signal URL.
+///
+/// Returns None on a missing, unparseable, or non-http(s) `url` parameter, so
+/// a malformed signal is simply ignored rather than launching anything.
+fn external_request_target(signal: &tauri::Url) -> Option<tauri::Url> {
+    let (_, encoded) = signal.query_pairs().find(|(key, _)| key == "url")?;
+    let requested = tauri::Url::parse(&encoded).ok()?;
+    matches!(requested.scheme(), "http" | "https").then_some(requested)
 }
 
 /// Open a URL in the user's default browser.
