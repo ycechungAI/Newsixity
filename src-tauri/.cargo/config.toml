@@ -1,0 +1,3 @@
+[target.i686-pc-windows-gnu]
+linker = "C:/MinGW/bin/gcc.exe"
+ar = "C:/MinGW/bin/ar.exe"
