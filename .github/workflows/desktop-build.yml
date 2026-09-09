@@ -70,6 +70,7 @@ jobs:
               python -m venv .venv
               . .venv/bin/activate
               python -m pip install -e "./backend[integrations,desktop]"
+              export NEWSIXITY_TAURI_VERBOSE=1
               ./build-linux-arch.sh
             '
 

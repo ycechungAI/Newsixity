@@ -43,7 +43,11 @@ export NO_STRIP=1
 BUNDLE="src-tauri/target/release/bundle"
 
 echo "📦 Building Tauri AppImage bundle..."
-npx tauri build --bundles appimage
+TAURI_BUILD_ARGS=(--bundles appimage)
+if [ -n "${NEWSIXITY_TAURI_VERBOSE:-}" ]; then
+    TAURI_BUILD_ARGS+=(-vvv)
+fi
+npx tauri build "${TAURI_BUILD_ARGS[@]}"
 
 APPIMAGE="$(ls "$BUNDLE"/appimage/*.AppImage 2>/dev/null | head -1)"
 
