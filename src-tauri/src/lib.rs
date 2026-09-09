@@ -23,6 +23,11 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use std::io::Write;
+#[cfg(target_os = "linux")]
+use std::os::unix::net::{UnixListener, UnixStream};
+
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -39,6 +44,72 @@ const OPEN_EXTERNAL_PATH: &str = "/__newsixity/open-external";
 /// Holds the sidecar child process so it can be killed on shutdown.
 /// `None` once killed (or if the backend never started) to make double-kill safe.
 struct BackendProcess(Mutex<Option<Child>>);
+
+/// Keeps one Newsixity shell per user session. The listener itself is the
+/// lock; the socket path is removed automatically when the process exits.
+#[cfg(target_os = "linux")]
+struct InstanceLock {
+    _listener: UnixListener,
+    path: std::path::PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn acquire_instance_lock() -> anyhow::Result<InstanceLock> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let path = runtime_dir.join("newsixity.sock");
+
+    match UnixListener::bind(&path) {
+        Ok(listener) => Ok(InstanceLock {
+            _listener: listener,
+            path,
+        }),
+        Err(bind_error) if bind_error.kind() == std::io::ErrorKind::AddrInUse => {
+            if let Ok(mut stream) = UnixStream::connect(&path) {
+                let _ = stream.write_all(b"replace\n");
+                for _ in 0..40 {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if let Ok(listener) = UnixListener::bind(&path) {
+                        return Ok(InstanceLock {
+                            _listener: listener,
+                            path,
+                        });
+                    }
+                }
+                anyhow::bail!("could not replace the running Newsixity instance");
+            }
+            // A previous forced exit can leave the socket behind without a
+            // listener. Remove only this exact application socket and retry.
+            std::fs::remove_file(&path)?;
+            Ok(InstanceLock {
+                _listener: UnixListener::bind(&path)?,
+                path,
+            })
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn watch_for_instance_replacement(app: AppHandle, lock: &InstanceLock) {
+    let Ok(listener) = lock._listener.try_clone() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        if listener.incoming().next().is_some() {
+            eprintln!("[Newsixity] Replaced by a newly launched instance");
+            app.exit(0);
+        }
+    });
+}
 
 /// Bind an ephemeral port on loopback, read it back, then release it.
 ///
@@ -274,9 +345,11 @@ fn install_crash_fallback(window: &tauri::WebviewWindow, url: &tauri::Url, app: 
                 .spawn()
             {
                 Ok(mut child) => {
-                    // The WebKit renderer is gone; close its grey host window
-                    // so only the Chromium fallback remains visible.
-                    let _ = window_for_fallback.close();
+                    // The WebKit renderer is gone; hide its grey host window
+                    // so only the Chromium fallback remains visible. Closing
+                    // it would trigger the normal close handler and kill the
+                    // backend that Chromium is about to use.
+                    let _ = window_for_fallback.hide();
                     let app_for_wait = app_for_wait.clone();
                     std::thread::spawn(move || {
                         let _ = child.wait();
@@ -348,6 +421,19 @@ fn open_externally(url: &tauri::Url) {
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            match acquire_instance_lock() {
+                Ok(lock) => {
+                    watch_for_instance_replacement(app.handle().clone(), &lock);
+                    app.manage(lock);
+                }
+                Err(error) => {
+                    eprintln!("[Newsixity] {error}");
+                    app.handle().exit(0);
+                    return Ok(());
+                }
+            }
+
             let app_handle = app.handle().clone();
             let port = pick_free_port().expect("failed to find a free loopback port");
 
