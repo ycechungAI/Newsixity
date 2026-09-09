@@ -177,6 +177,12 @@ export default function VideoEmbed({
   const isLinuxYouTube = isLinux && videoInfo?.type === "youtube";
   const isNative =
     isDirect || (!isLinux && videoInfo?.type === "youtube" && !!activeVideoId);
+  
+  // Windows-specific fix: Individual YouTube links often fail to render in the internal 
+  // shared player if they are treated as 'native' (which targets a <video> element).
+  // They must remain as 'iframe' for Windows WebView2 compatibility.
+  const isWindowsNative = !isLinux && videoInfo?.type === "youtube" && !!activeVideoId;
+  const effectiveIsNative = isDirect || (isWindowsNative ? false : isNative);
 
   /**
    * Canonical YouTube page for whatever is loaded right now.
@@ -203,7 +209,7 @@ export default function VideoEmbed({
           key: slotKey ?? url,
           embedUrl: currentEmbedUrl,
           title: currentTitle,
-          kind: isNative ? "video" : "iframe",
+           kind: effectiveIsNative ? "video" : "iframe",
         }
       : null
   );
@@ -299,7 +305,7 @@ export default function VideoEmbed({
             >
               ▶ Watch on Animex.one
             </a>
-          ) : isNative ? (
+           ) : effectiveIsNative ? (
             <video
               src={currentEmbedUrl}
               title={currentTitle}
