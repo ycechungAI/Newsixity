@@ -89,7 +89,12 @@ rm -rf \
   "$APPDIR/usr/lib/webkit2gtk-4.1" \
   "$APPDIR"/usr/lib/libgst*.so.0 \
   "$APPDIR"/usr/lib/libwebp*.so* \
-  "$APPDIR"/usr/lib/libsharpyuv*.so* 2>/dev/null || true
+  "$APPDIR"/usr/lib/libsharpyuv*.so* \
+  "$APPDIR"/usr/lib/libglib-2.0.so* \
+  "$APPDIR"/usr/lib/libgobject-2.0.so* \
+  "$APPDIR"/usr/lib/libgio-2.0.so* \
+  "$APPDIR"/usr/lib/libgmodule-2.0.so* \
+  "$APPDIR"/usr/lib/libgthread-2.0.so* 2>/dev/null || true
 
 # 2. Neutralise the session GDK_SCALE (2x text), point GStreamer at system
 #    plugins, and pin GLVND to a single (Mesa) EGL/GLX backend before the
