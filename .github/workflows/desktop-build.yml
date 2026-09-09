@@ -2,9 +2,19 @@ name: Desktop Build
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Build platform
+        required: true
+        default: linux-x64
+        type: choice
+        options:
+          - linux-x64
+          - all
 
 jobs:
   build:
+    if: inputs.platform == 'all' || matrix.name == inputs.platform
     strategy:
       fail-fast: false
       matrix:
@@ -54,12 +64,18 @@ jobs:
           fi
           python -m pip install -e "./backend[integrations,desktop]"
 
-      - name: Build sidecar
-        shell: bash
-        run: ./backend/build_sidecar.sh
-
       - name: Build Tauri
-        run: npx tauri build
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            # Linux needs the same WebKitGTK/GStreamer AppImage post-processing
+            # used by the local Linux build. The generic Tauri AppImage can
+            # abort at startup when it loads bundled graphics/media libraries.
+            ./build-linux-arch.sh
+          else
+            ./backend/build_sidecar.sh
+            npx tauri build
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
