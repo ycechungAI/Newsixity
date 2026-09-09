@@ -2,21 +2,15 @@ name: Desktop Build
 
 on:
   workflow_dispatch:
-    inputs:
-      platform:
-        description: Build platform
-        required: true
-        default: linux-x64
-        type: choice
-        options:
-          - linux-x64
-          - all
 
 jobs:
   build:
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(inputs.platform == 'linux-x64' && '[{"os":"ubuntu-latest","name":"linux-x64"}]' || '[{"os":"macos-14","name":"macos-arm64"},{"os":"windows-latest","name":"windows-x64"},{"os":"ubuntu-latest","name":"linux-x64"}]') }}
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
 
     runs-on: ${{ matrix.os }}
 
