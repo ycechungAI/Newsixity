@@ -31,6 +31,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare Arch build cache
+        if: matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch')
+        shell: bash
+        run: mkdir -p .ci-cache/arch/{pacman,cargo,rustup,npm,pip,tauri}
+
+      - name: Restore Arch build cache
+        if: matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch')
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/arch
+          key: archlinux-v1-${{ hashFiles('package-lock.json', 'src-tauri/Cargo.lock', 'backend/pyproject.toml') }}
+          restore-keys: |
+            archlinux-v1-
+
       - name: Setup Node
         if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
         uses: actions/setup-node@v4
@@ -53,6 +67,12 @@ jobs:
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/pacman:/var/cache/pacman/pkg" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/cargo:/root/.cargo" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/rustup:/root/.rustup" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/npm:/root/.npm" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/pip:/root/.cache/pip" \
+            --volume "$GITHUB_WORKSPACE/.ci-cache/arch/tauri:/root/.cache/tauri" \
             --workdir /workspace \
             archlinux:latest \
             bash -lc '
@@ -64,13 +84,12 @@ jobs:
               pacman -S --noconfirm --needed \
                 base-devel curl file git nodejs npm openssl patchelf python \
                 python-pip rustup wget webkit2gtk-4.1 libappindicator librsvg \
-                gst-plugins-base
+                gst-plugins-base gdk-pixbuf2
               rustup default stable
               npm ci
               python -m venv .venv
               . .venv/bin/activate
               python -m pip install -e "./backend[integrations,desktop]"
-              export NEWSIXITY_TAURI_VERBOSE=1
               ./build-linux-arch.sh
             '
 
