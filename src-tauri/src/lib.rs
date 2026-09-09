@@ -234,12 +234,14 @@ fn install_crash_fallback(window: &tauri::WebviewWindow, url: &tauri::Url, app: 
 
     let fallback_url = url.to_string();
     let guard = Arc::new(AtomicBool::new(false));
+    let window_for_fallback = window.clone();
 
     match window.as_ref().with_webview(move |webview| {
         let raw = webview.inner();
         let fallback_url = fallback_url.clone();
         let guard = guard.clone();
         let app_for_wait = app.clone();
+        let window_for_fallback = window_for_fallback.clone();
 
         // Enable JS console messages to stdout so they appear in our logs
         if let Some(settings) = raw.settings() {
@@ -264,11 +266,17 @@ fn install_crash_fallback(window: &tauri::WebviewWindow, url: &tauri::Url, app: 
                 "[Newsixity] WebKitWebProcess terminated, launching Chromium fallback: {fallback_url}"
             );
 
+            let profile_dir = std::env::temp_dir()
+                .join(format!("newsixity-chromium-{}", std::process::id()));
             match std::process::Command::new("chromium")
-                .args(["--app", &fallback_url, "--no-first-run"])
+                .args(["--app", &fallback_url, "--no-first-run", "--disable-gpu"])
+                .arg(format!("--user-data-dir={}", profile_dir.display()))
                 .spawn()
             {
                 Ok(mut child) => {
+                    // The WebKit renderer is gone; close its grey host window
+                    // so only the Chromium fallback remains visible.
+                    let _ = window_for_fallback.close();
                     let app_for_wait = app_for_wait.clone();
                     std::thread::spawn(move || {
                         let _ = child.wait();

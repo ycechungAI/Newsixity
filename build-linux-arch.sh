@@ -113,6 +113,7 @@ fix = (
     '# backend would otherwise apply on top of the correct 1.0 monitor scale,\n'
     '# rendering the whole UI at 2x. Linux-only (env var absent on Win/macOS).\n'
     'export GDK_SCALE=1\n'
+    'export WEBKIT_DISABLE_DMABUF_RENDERER=1\n'
     '\n'
     '# We stripped bundled WebKit and GStreamer from the AppDir so the binary links\n'
     '# the system copies. Force GStreamer to discover system plugins explicitly;\n'
