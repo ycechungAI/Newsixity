@@ -94,7 +94,10 @@ rm -rf \
   "$APPDIR"/usr/lib/libgobject-2.0.so* \
   "$APPDIR"/usr/lib/libgio-2.0.so* \
   "$APPDIR"/usr/lib/libgmodule-2.0.so* \
-  "$APPDIR"/usr/lib/libgthread-2.0.so* 2>/dev/null || true
+  "$APPDIR"/usr/lib/libgthread-2.0.so* \
+  "$APPDIR"/usr/lib/libpcre2-*.so* \
+  "$APPDIR"/usr/lib/libmount.so* \
+  "$APPDIR"/usr/lib/libblkid.so* 2>/dev/null || true
 
 # 2. Neutralise the session GDK_SCALE (2x text), point GStreamer at system
 #    plugins, and pin GLVND to a single (Mesa) EGL/GLX backend before the
