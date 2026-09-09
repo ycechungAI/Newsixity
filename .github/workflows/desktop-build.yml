@@ -81,11 +81,12 @@ jobs:
               # GitHub Docker containers cannot mount FUSE AppImages.
               # The Tauri linuxdeploy helper supports self-extraction instead.
               export APPIMAGE_EXTRACT_AND_RUN=1
+              trap "chmod -R a+rX /var/cache/pacman/pkg /root/.cargo /root/.rustup /root/.npm /root/.cache 2>/dev/null || true" EXIT
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed \
                 base-devel curl file git nodejs npm openssl patchelf python \
                 python-pip rustup wget webkit2gtk-4.1 libappindicator librsvg \
-                gst-plugins-base gdk-pixbuf2
+                gst-plugins-base gdk-pixbuf2 libwmf
               rustup default stable
               npm ci
               python -m venv .venv
