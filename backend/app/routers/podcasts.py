@@ -9,10 +9,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.db.models import PodcastEpisode, PodcastFeed
 from app.db.session import SessionLocal
 from app.lib.podcast.parser import (
-    extract_podcast_episodes,
     extract_podcast_feed_info,
     fetch_podcast_feed,
 )
+from app.lib.podcast.refresh import refresh_all_podcasts as refresh_all_podcast_feeds
 from app.schemas import (
     PodcastEpisodeSchema,
     PodcastFeedSchema,
@@ -178,32 +178,4 @@ def update_episode(episode_id: int, body: dict):
 @router.post("/podcasts/refresh")
 def refresh_all_podcasts():
     """Re-fetch all subscribed podcast feeds."""
-    with SessionLocal() as session:
-        feeds = session.execute(select(PodcastFeed)).scalars().all()
-        updated_count = 0
-
-        for feed in feeds:
-            try:
-                feed_data = fetch_podcast_feed(feed.feed_url)
-            except Exception as e:
-                feed.last_error = str(e)
-                continue
-
-            if feed_data.bozo:
-                feed.last_error = "Malformed feed"
-                continue
-
-            feed.last_error = None
-            episodes = extract_podcast_episodes(feed_data)
-
-            for ep in episodes:
-                stmt = (
-                    sqlite_insert(PodcastEpisode)
-                    .values(podcast_id=feed.id, **ep)
-                    .on_conflict_do_nothing()
-                )
-                session.execute(stmt)
-            updated_count += 1
-
-        session.commit()
-        return {"updated_feeds": updated_count, "total_feeds": len(feeds)}
+    return refresh_all_podcast_feeds()

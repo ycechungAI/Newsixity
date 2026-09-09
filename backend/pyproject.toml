@@ -28,6 +28,7 @@ integrations = [
     "yfinance>=0.2.40",
     "ollama>=0.3",
     "apscheduler>=3.10",
+    "yt-dlp>=2025.1",
 ]
 dev = [
     "pytest>=8.0",

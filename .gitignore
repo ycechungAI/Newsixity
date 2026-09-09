@@ -65,3 +65,6 @@ database.sqlite
 
 # Built desktop artifacts, kept for installing (see build-desktop-mac.sh)
 /install_file/
+
+# macOS AppleDouble metadata junk
+._*

@@ -33,5 +33,9 @@
   "overrides": {
     "postcss": "^8.5.10"
   },
-  "author": "ycechung"
+  "author": "ycechung",
+  "allowScripts": {
+    "@swc/core@1.15.46": true,
+    "esbuild@0.25.12": true
+  }
 }

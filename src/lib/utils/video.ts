@@ -7,6 +7,35 @@ export interface VideoInfo {
 }
 
 /**
+ * Linux webviews (WebKitGTK) have no Widevine, so YouTube iframe embeds never
+ * play there — Windows (WebView2) and macOS (WKWebView) ship DRM and the
+ * embed just works. The Linux fix routes YouTube through our backend's
+ * DRM-free /api/videos/stream endpoint into a native <video> element.
+ *
+ * Detected from the user agent; other platforms are left on the embed path
+ * untouched so their (working) playback never changes.
+ */
+export const isLinux =
+  typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent);
+
+/** Stream URL for a YouTube video on Linux, else the direct iframe embed URL. */
+export function youtubePlayableUrl(videoId: string, playlistId?: string, maxHeight = 720): string {
+  const base = `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`;
+  if (!isLinux) {
+    return playlistId ? `${base}?list=${encodeURIComponent(playlistId)}` : base;
+  }
+  const watch =
+    `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` +
+    (playlistId ? `&list=${encodeURIComponent(playlistId)}` : "");
+  return `/api/videos/stream?url=${encodeURIComponent(watch)}&maxHeight=${maxHeight}`;
+}
+
+/** True when the current platform embeds YouTube via an iframe (default). */
+export function shouldIframeYouTube(): boolean {
+  return !isLinux;
+}
+
+/**
  * Extract video information from a URL
  * Supports YouTube and Vimeo
  */

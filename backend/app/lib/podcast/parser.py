@@ -1,6 +1,7 @@
 """Podcast RSS feed parser using feedparser."""
 
 import hashlib
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -102,6 +103,15 @@ def extract_podcast_episodes(
 
         title = entry.get("title", "Untitled")
         published_at = entry.get("published")
+        # Normalize to ISO-8601 so `ORDER BY published_at DESC` sorts correctly.
+        # Raw RFC822 strings ("Wed, 9 Sep 2020 09:56:18 +0000") compare
+        # lexicographically by day-of-month and scramble the episode order.
+        parsed_pub = entry.get("published_parsed")
+        if parsed_pub is not None:
+            try:
+                published_at = datetime(*parsed_pub[:6], tzinfo=timezone.utc).isoformat()
+            except (ValueError, TypeError):
+                published_at = None
         description = entry.get("summary") or entry.get("description")
 
         duration_seconds = None

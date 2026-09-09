@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { extractVideoInfo, type PlaylistItem } from "@/lib/utils/video";
+import {
+  extractVideoInfo,
+  isLinux,
+  youtubePlayableUrl,
+  type PlaylistItem,
+} from "@/lib/utils/video";
 import { useVideoPlayer, useVideoSlot } from "@/lib/video/playerContext";
 
 /** Videos listed per page. The whole playlist is already loaded — this is
@@ -44,11 +49,24 @@ export default function VideoEmbed({
   onRefreshPlaylist,
 }: VideoEmbedProps) {
   const videoInfo = extractVideoInfo(url);
-  const [currentEmbedUrl, setCurrentEmbedUrl] = useState(videoInfo?.embedUrl ?? "");
+  const [currentEmbedUrl, setCurrentEmbedUrl] = useState(
+    // Linux: WebKit has no Widevine, so YouTube iframes never play. Route the
+    // video through our backend's DRM-free stream into a native <video>. On
+    // Windows/macOS the iframe embed is the original, working path — leave it.
+    isLinux && videoInfo?.type === "youtube" && !!videoInfo?.videoId
+      ? youtubePlayableUrl(videoInfo.videoId, videoInfo?.playlistId)
+      : (videoInfo?.embedUrl ?? "")
+  );
   const [currentTitle, setCurrentTitle] = useState(title ?? "");
   const [activeVideoId, setActiveVideoId] = useState(videoInfo?.videoId ?? "");
   const [playlistPage, setPlaylistPage] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Keyed off the CURRENT video (activeVideoId), not the original URL: a
+  // playlist-only link starts with no videoId, and only resolves to a real
+  // video once the playlist loads — after which native streaming must apply.
+  const hasActiveLinuxYouTube =
+    isLinux && videoInfo?.type === "youtube" && !!activeVideoId;
 
   const { dockWidthPct, setDockWidthPct } = useVideoPlayer();
 
@@ -92,7 +110,7 @@ export default function VideoEmbed({
     if (!first) return;                              // Not fetched yet.
 
     setCurrentEmbedUrl(
-      `https://www.youtube.com/embed/${first.videoId}?list=${videoInfo.playlistId}`
+      youtubePlayableUrl(first.videoId, videoInfo.playlistId)
     );
     setCurrentTitle(first.title);
     setActiveVideoId(first.videoId);
@@ -118,10 +136,11 @@ export default function VideoEmbed({
       const next = index >= 0 ? playlistItems[index + 1] : undefined;
       if (!next) return;  // End of the playlist — stop rather than loop.
 
-      const list = videoInfo?.playlistId ? `&list=${videoInfo.playlistId}` : "";
-      setCurrentEmbedUrl(
-        `https://www.youtube.com/embed/${next.videoId}?autoplay=1${list}`
-      );
+      const nextUrl = hasActiveLinuxYouTube
+        ? youtubePlayableUrl(next.videoId, videoInfo?.playlistId)
+        : `https://www.youtube.com/embed/${next.videoId}?autoplay=1` +
+          (videoInfo?.playlistId ? `&list=${videoInfo.playlistId}` : "");
+      setCurrentEmbedUrl(nextUrl);
       setCurrentTitle(next.title);
       setActiveVideoId(next.videoId);
 
@@ -131,10 +150,17 @@ export default function VideoEmbed({
 
     window.addEventListener("video-ended", onEnded);
     return () => window.removeEventListener("video-ended", onEnded);
-  }, [autoplayNext, playlistItems, activeVideoId, videoInfo?.playlistId]);
+  }, [autoplayNext, playlistItems, activeVideoId, videoInfo?.playlistId, hasActiveLinuxYouTube]);
 
   const isAnimex = videoInfo?.type === "animex";
   const isDirect = videoInfo?.type === "direct";
+  // Linux WebKitGTK has no Widevine and its GStreamer media path can abort the
+  // WebKitWebProcess when asked to play YouTube's extracted stream. Keep the
+  // playlist UI in-app, but hand the selected YouTube video to the user's
+  // browser instead of creating either an iframe or a native media element.
+  const isLinuxYouTube = isLinux && videoInfo?.type === "youtube";
+  const isNative =
+    isDirect || (!isLinux && videoInfo?.type === "youtube" && !!activeVideoId);
 
   /**
    * Canonical YouTube page for whatever is loaded right now.
@@ -153,7 +179,7 @@ export default function VideoEmbed({
           ? `https://www.youtube.com/playlist?list=${videoInfo.playlistId}`
           : null;
   // Animex is a plain link-out, so it never takes over the shared player.
-  const useShared = shared && !!videoInfo && !isAnimex;
+  const useShared = shared && !!videoInfo && !isAnimex && !isLinuxYouTube;
 
   const slotRef = useVideoSlot(
     useShared
@@ -161,7 +187,7 @@ export default function VideoEmbed({
           key: slotKey ?? url,
           embedUrl: currentEmbedUrl,
           title: currentTitle,
-          kind: isDirect ? "video" : "iframe",
+          kind: isNative ? "video" : "iframe",
         }
       : null
   );
@@ -242,13 +268,22 @@ export default function VideoEmbed({
       ) : (
         /* 16:9 embed container */
         <div className="card-video">
-          {isAnimex ? (
+          {isLinuxYouTube ? (
+            <a
+              href={watchUrl ?? url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "#171717", color: "#fff", fontSize: 12, textDecoration: "none" }}
+            >
+              ▶ Open on YouTube
+            </a>
+          ) : isAnimex ? (
             <a href={url} target="_blank" rel="noopener noreferrer"
               style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "#1a0a2e", color: "#fff", fontSize: 12, textDecoration: "none" }}
             >
               ▶ Watch on Animex.one
             </a>
-          ) : isDirect ? (
+          ) : isNative ? (
             <video
               src={currentEmbedUrl}
               title={currentTitle}
@@ -320,7 +355,9 @@ export default function VideoEmbed({
                   <button
                     className={`vid-playlist-btn${activeVideoId === item.videoId ? " active" : ""}`}
                     onClick={() => {
-                      setCurrentEmbedUrl(`https://www.youtube.com/embed/${item.videoId}`);
+                      setCurrentEmbedUrl(
+                        youtubePlayableUrl(item.videoId, videoInfo?.playlistId)
+                      );
                       setCurrentTitle(item.title);
                       setActiveVideoId(item.videoId);
                     }}

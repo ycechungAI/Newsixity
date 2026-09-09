@@ -156,11 +156,16 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
 
     wait_for_health(port).await?;
 
-    let url = format!("http://127.0.0.1:{port}").parse()?;
-    let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url))
+    let url: tauri::Url = format!("http://127.0.0.1:{port}").parse()?;
+    #[cfg(target_os = "linux")]
+    let (default_w, default_h, min_w, min_h) = (1100.0, 750.0, 800.0, 550.0);
+    #[cfg(not(target_os = "linux"))]
+    let (default_w, default_h, min_w, min_h) = (1400.0, 900.0, 900.0, 600.0);
+
+    let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url.clone()))
         .title("Newsixity")
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(900.0, 600.0)
+        .inner_size(default_w, default_h)
+        .min_inner_size(min_w, min_h)
         // Open a link in the system browser *only* when the frontend asks,
         // by navigating to OPEN_EXTERNAL_PATH on our own origin.
         //
@@ -202,8 +207,92 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
         }
     });
 
+    install_crash_fallback(&window, &url, app);
+
     Ok(())
 }
+
+/// Chromium crash-fallback for Linux WebKitWebProcess aborts.
+///
+/// The webview's media pipeline lives in the `WebKitWebProcess`: when that
+/// process dies (e.g. WebKitGTK's `RELEASE_ASSERT(audioSink)` on a failing
+/// GStreamer audio-sink creation), the whole webview goes blank even though
+/// the backend sidecar is still healthy. Rather than leave the user staring
+/// at a dead window, listen for the process-terminated signal and, on a
+/// crash (not a benign teardown), re-open the same backend URL in an
+/// application-mode Chromium window. The sidecar stays alive because we
+/// never exit the app here — the shell keeps running and owns the backend,
+/// and when the Chromium window is eventually closed we quit for real,
+/// which kills the sidecar exactly like a normal app exit.
+#[cfg(target_os = "linux")]
+fn install_crash_fallback(window: &tauri::WebviewWindow, url: &tauri::Url, app: AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use webkit2gtk::WebProcessTerminationReason;
+    use webkit2gtk::WebViewExt;
+    use webkit2gtk::SettingsExt;
+
+    let fallback_url = url.to_string();
+    let guard = Arc::new(AtomicBool::new(false));
+
+    match window.as_ref().with_webview(move |webview| {
+        let raw = webview.inner();
+        let fallback_url = fallback_url.clone();
+        let guard = guard.clone();
+        let app_for_wait = app.clone();
+
+        // Enable JS console messages to stdout so they appear in our logs
+        if let Some(settings) = raw.settings() {
+            settings.set_enable_write_console_messages_to_stdout(true);
+            eprintln!("[Newsixity] JS console capture enabled via stdout");
+        }
+
+        let handler = raw.connect_web_process_terminated(move |_, reason| {
+            eprintln!("[Newsixity] web-process-terminated signal, reason: {reason:?}");
+            if !matches!(
+                reason,
+                WebProcessTerminationReason::Crashed
+                    | WebProcessTerminationReason::ExceededMemoryLimit
+            ) {
+                return;
+            }
+            // Fire exactly once, no matter how many times the process dies.
+            if guard.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            eprintln!(
+                "[Newsixity] WebKitWebProcess terminated, launching Chromium fallback: {fallback_url}"
+            );
+
+            match std::process::Command::new("chromium")
+                .args(["--app", &fallback_url, "--no-first-run"])
+                .spawn()
+            {
+                Ok(mut child) => {
+                    let app_for_wait = app_for_wait.clone();
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                        app_for_wait.exit(0);
+                    });
+                }
+                Err(err) => {
+                    eprintln!("[Newsixity] chromium not available, staying alive: {err}");
+                }
+            }
+        });
+        eprintln!(
+            "[Newsixity] crash fallback wired (handler id {handler:?})"
+        );
+    }) {
+        Ok(()) => eprintln!("[Newsixity] crash fallback installed"),
+        Err(err) => eprintln!("[Newsixity] crash fallback FAILED to wire: {err}"),
+    }
+}
+
+/// No-op on non-Linux: the crash is specific to WebKitGTK's GStreamer media
+/// pipeline, and other platforms never ship that engine.
+#[cfg(not(target_os = "linux"))]
+fn install_crash_fallback(_window: &tauri::WebviewWindow, _url: &tauri::Url, _app: AppHandle) {}
 
 /// Pull the requested destination out of an OPEN_EXTERNAL_PATH signal URL.
 ///
