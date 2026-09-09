@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import asyncio
 
-from ollama import AsyncClient
-
 from app.db.repository import get_ollama_model_setting, get_setting
+
+try:
+    from ollama import AsyncClient
+except ImportError:  # ollama not installed — app must still run (skips summarization)
+    AsyncClient = None  # type: ignore[assignment,misc]
+
+OLLAMA_INSTALLED = AsyncClient is not None
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_RESEARCH_MODEL = "llama3.2"
@@ -53,6 +58,16 @@ class OllamaModelNotFoundError(Exception):
     pass
 
 
+def _client(host: str) -> AsyncClient:
+    """Return a client, or raise the same error callers already handle for
+    unreachable Ollama when the `ollama` package isn't installed."""
+    if not OLLAMA_INSTALLED:
+        raise OllamaUnavailableError(
+            "The 'ollama' package is not installed; Ollama summarization is disabled"
+        )
+    return AsyncClient(host=host)
+
+
 def _get_host() -> str:
     return get_setting("ollama_host") or DEFAULT_HOST
 
@@ -66,18 +81,20 @@ _summarize_lock = asyncio.Lock()
 
 
 async def is_ollama_available(host: str | None = None) -> bool:
+    if not OLLAMA_INSTALLED:
+        return False
     try:
-        client = AsyncClient(host=host or _get_host())
-        await client.list()
+        await _client(host=host or _get_host()).list()
         return True
     except Exception:
         return False
 
 
 async def get_available_models(host: str | None = None) -> list[str]:
+    if not OLLAMA_INSTALLED:
+        return []
     try:
-        client = AsyncClient(host=host or _get_host())
-        response = await client.list()
+        response = await _client(host=host or _get_host()).list()
         return [m.model for m in response.models if m.model]
     except Exception:
         return []
@@ -131,8 +148,7 @@ async def summarize_article(title: str, content: str, model: str | None = None) 
 
     async with _summarize_lock:
         try:
-            client = AsyncClient(host=_get_host())
-            response = await client.chat(
+            response = await _client(host=_get_host()).chat(
                 model=model_to_use,
                 stream=False,
                 messages=[
@@ -161,8 +177,7 @@ async def generate_group_label(titles: list[str], model: str | None = None) -> s
         model = await get_default_model()
 
     try:
-        client = AsyncClient(host=host)
-        response = await client.chat(
+        response = await _client(host=host).chat(
             model=model,
             stream=False,
             messages=[
@@ -210,8 +225,7 @@ Research Sources:
 Question: {question}"""
 
     try:
-        client = AsyncClient(host=host)
-        response = await client.chat(
+        response = await _client(host=host).chat(
             model=model,
             stream=False,
             messages=[

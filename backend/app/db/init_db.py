@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select, text
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.base import Base
-from app.db.models import Category, Feed
+from app.db.models import Category, Feed, PodcastEpisode
 from app.db.session import engine, SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,53 @@ def init_fts5_search(session: Session) -> bool:
         return False
 
 
+def _normalize_podcast_episode_dates(session: Session) -> None:
+    """Backfill: normalize podcast episode ``published_at`` to ISO-8601.
+
+    Older builds stored the raw RFC822 ``published`` string (e.g.
+    ``"Wed, 9 Sep 2020 09:56:18 +0000"``). Lexicographic ``ORDER BY`` on those
+    sorts by day-of-month and scrambles episode ordering. Normalize any rows
+    that don't already look like ISO-8601 into UTC ISO format. Idempotent and
+    fast to run on every startup (only touches non-ISO rows).
+    """
+    from email.utils import parsedate_to_datetime
+
+    rows = session.execute(
+        text(
+            "SELECT id, published_at FROM podcast_episodes "
+            "WHERE published_at IS NOT NULL AND published_at != ''"
+        )
+    ).fetchall()
+
+    normalized = 0
+    for row in rows:
+        raw: str = row.published_at
+        # Skip values already normalized on a previous run.
+        try:
+            datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            continue
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            parsed = parsedate_to_datetime(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            session.execute(
+                text("UPDATE podcast_episodes SET published_at = :iso WHERE id = :id"),
+                {"iso": parsed.isoformat(), "id": row.id},
+            )
+            normalized += 1
+        except (ValueError, TypeError):
+            continue
+
+    if normalized:
+        session.commit()
+        logger.info(
+            "[Newsixity] Normalized %d podcast episode dates to ISO-8601", normalized
+        )
+
+
 def init_db() -> None:
     """Create tables (if missing) and seed default categories + Manual Links feed."""
     # On first run of a packaged app, copy the bundled seed database.
@@ -172,6 +220,9 @@ def init_db() -> None:
 
     with SessionLocal() as session:
         init_fts5_search(session)
+
+    with SessionLocal() as session:
+        _normalize_podcast_episode_dates(session)
 
     with SessionLocal() as session:
         for name, slug, sort_order in DEFAULT_CATEGORIES:

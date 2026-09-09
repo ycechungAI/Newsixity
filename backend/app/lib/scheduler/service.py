@@ -22,6 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.lib.scheduler.backup import create_daily_backup
+from app.lib.scheduler.podcasts import refresh_all_podcasts
 from app.lib.scheduler.refresh import refresh_all_feeds
 from app.lib.scheduler.summarizer import check_and_summarize
 
@@ -29,6 +30,7 @@ logger = logging.getLogger("newsixity")
 
 RSS_REFRESH_INTERVAL_MINUTES = 15
 SUMMARIZE_INTERVAL_MINUTES = 3
+PODCAST_REFRESH_INTERVAL_HOURS = 6
 BACKUP_HOUR = 3  # 3 AM local time, matching backup/scheduler.ts.
 
 _scheduler: AsyncIOScheduler | None = None
@@ -73,6 +75,18 @@ def start_background_services() -> AsyncIOScheduler | None:
         misfire_grace_time=None,
     )
 
+    # Podcast refresh: first run 30s after startup, then every 6 hours.
+    scheduler.add_job(
+        refresh_all_podcasts,
+        trigger="interval",
+        hours=PODCAST_REFRESH_INTERVAL_HOURS,
+        next_run_time=now + timedelta(seconds=30),
+        id="podcast-refresh",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=None,
+    )
+
     # Daily backup at 3 AM local time.
     scheduler.add_job(
         create_daily_backup,
@@ -93,9 +107,10 @@ def start_background_services() -> AsyncIOScheduler | None:
     scheduler.start()
     _scheduler = scheduler
     logger.info(
-        "[Newsixity] Background services started (RSS %dm, summarize %dm, backup %02d:00)",
+        "[Newsixity] Background services started (RSS %dm, summarize %dm, podcasts %dh, backup %02d:00)",
         RSS_REFRESH_INTERVAL_MINUTES,
         SUMMARIZE_INTERVAL_MINUTES,
+        PODCAST_REFRESH_INTERVAL_HOURS,
         BACKUP_HOUR,
     )
     return scheduler

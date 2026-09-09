@@ -1,6 +1,14 @@
-"""Ollama endpoints — /api/ollama/*. Port of src/app/api/ollama/models/route.ts."""
+"""Ollama endpoints — /api/ollama/*. Port of src/app/api/ollama/models/route.ts.
 
-from ollama import AsyncClient
+The `ollama` Python package is optional: when it is not installed, the app
+must still load and everything else works — only Ollama-specific endpoints
+report offline. The guarded import mirrors lib/integrations/ollama.py.
+"""
+
+try:
+    from ollama import AsyncClient
+except ImportError:  # ollama not installed — report offline, keep the app running
+    AsyncClient = None  # type: ignore[assignment,misc]
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -57,6 +65,11 @@ async def ollama_health() -> JSONResponse:
     HTML page and then found no models.
     """
     host = get_setting("ollama_host") or "http://localhost:11434"
+    if AsyncClient is None:
+        return JSONResponse(
+            {"status": "offline", "host": host, "availableModels": []},
+            status_code=503,
+        )
     try:
         response = await AsyncClient(host=host).list()
         models = [m.model for m in response.models if m.model]
@@ -72,20 +85,22 @@ async def ollama_health() -> JSONResponse:
 @router.get("/ollama/models")
 async def get_ollama_models() -> dict:
     host = get_setting("ollama_host") or "http://localhost:11434"
-    client = AsyncClient(host=host)
 
     installed_models: list[dict] = []
     is_running = False
 
-    try:
-        response = await client.list()
-        installed_models = [
-            {"name": m.model, "size": m.size, "modified": m.modified_at}
-            for m in response.models
-        ]
-        is_running = True
-    except Exception:
-        pass
+    if AsyncClient is not None:
+        client = AsyncClient(host=host)
+
+        try:
+            response = await client.list()
+            installed_models = [
+                {"name": m.model, "size": m.size, "modified": m.modified_at}
+                for m in response.models
+            ]
+            is_running = True
+        except Exception:
+            pass
 
     installed_names = [m["name"] for m in installed_models if m["name"]]
 

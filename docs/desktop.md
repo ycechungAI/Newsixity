@@ -142,3 +142,25 @@ The dev workflow with `npm run dev` and `start.sh` continues to work unchanged f
 Each runner freezes its own backend (PyInstaller doesn't cross-compile) and calls `./backend/build_sidecar.sh` + `npx tauri build`, same as the local macOS flow. The only difference: **CI builds ship with an empty database**, not your seeded one. `data/newsixity.db` is gitignored (it's your live reading data — saved articles, read history — and never gets committed), so CI runners simply don't have it. The app already handles a missing seed gracefully: it logs a warning and starts with a fresh, empty database that populates on the first RSS refresh. If you want a seeded CI build, you'd need to separately provision the seed DB to the runner (e.g. as a private release asset) — not currently wired up.
 
 Building Windows/Linux locally instead of via CI works the same way as macOS (`build_sidecar.sh` then `tauri build`), but you need to be running on that OS — PyInstaller can't cross-freeze the Python backend for a different platform than it's running on.
+
+### Linux (Arch-based)
+
+```bash
+./build-linux-arch.sh
+```
+
+Produces a single-file **AppImage** at `src-tauri/target/release/bundle/appimage/Newsixity_*_amd64.AppImage` (plus a timestamped copy under `install_file/`). No install step: `chmod +x` and run. The script sets `NO_STRIP=1` because linuxdeploy's bundled `strip` chokes on the `.relr.dyn` ELF sections current Arch toolchains emit — without it the AppImage bundle aborts.
+
+Requires: Rust toolchain (rustup or mise), Node.js, and the Tauri Linux deps (`webkit2gtk-4.1`, `gtk3`, `libsoup-3.0`, `javascriptcoregtk-4.1` — installd via `opkg install webkit2gtk-4.1 gtk3 libsoup3 javascriptcoregtk` on Arch).
+
+### Linux (Ubuntu/Debian)
+
+```bash
+./build-linux-ubuntu.sh
+```
+
+Produces a **.deb** at `src-tauri/target/release/bundle/deb/Newsixity_*_amd64.deb` (plus a timestamped copy under `install_file/`), installable via `sudo apt install <file>.deb`. Run the script on an actual Ubuntu/Debian machine (it needs `dpkg-deb`, which isn't present on Arch). Same tooling requirements as above, but with:
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```

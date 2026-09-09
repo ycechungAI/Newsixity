@@ -48,7 +48,7 @@ hiddenimports = [
     "uvicorn.lifespan.on",
 ]
 
-for pkg in ("trafilatura", "courlan", "justext", "yfinance"):
+for pkg in ("trafilatura", "courlan", "justext", "yfinance", "yt_dlp"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
     datas += pkg_datas
     binaries += pkg_binaries
