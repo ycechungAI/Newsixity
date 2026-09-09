@@ -38,7 +38,8 @@ jobs:
 
       - name: Restore Arch build cache
         if: matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch')
-        uses: actions/cache@v4
+        id: arch-build-cache
+        uses: actions/cache/restore@v4
         with:
           path: .ci-cache/arch
           key: archlinux-v1-${{ hashFiles('package-lock.json', 'src-tauri/Cargo.lock', 'backend/pyproject.toml') }}
@@ -90,8 +91,16 @@ jobs:
               python -m venv .venv
               . .venv/bin/activate
               python -m pip install -e "./backend[integrations,desktop]"
+              export NEWSIXITY_TAURI_VERBOSE=1
               ./build-linux-arch.sh
             '
+
+      - name: Save Arch build cache
+        if: always() && matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch') && steps.arch-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-cache/arch
+          key: ${{ steps.arch-build-cache.outputs.cache-primary-key }}
 
       - name: Build Ubuntu package
         if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
