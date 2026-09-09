@@ -15,7 +15,6 @@ on:
 
 jobs:
   build:
-    if: ${{ inputs.target == 'all' || inputs.target == matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,23 +32,23 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Node
-        if: matrix.target == 'ubuntu'
+        if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Setup Python
-        if: matrix.target == 'ubuntu'
+        if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Setup Rust
-        if: matrix.target == 'ubuntu'
+        if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Arch Linux AppImage
-        if: matrix.target == 'arch'
+        if: matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch')
         shell: bash
         run: |
           docker run --rm \
@@ -75,7 +74,7 @@ jobs:
             '
 
       - name: Build Ubuntu package
-        if: matrix.target == 'ubuntu'
+        if: matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu')
         shell: bash
         run: |
           # Chrome is not needed; omitting its occasionally stale repository
@@ -92,6 +91,7 @@ jobs:
           ./build-linux-ubuntu.sh
 
       - name: Upload artifact
+        if: (matrix.target == 'arch' && (inputs.target == 'all' || inputs.target == 'arch')) || (matrix.target == 'ubuntu' && (inputs.target == 'all' || inputs.target == 'ubuntu'))
         uses: actions/upload-artifact@v4
         with:
           name: newsixity-${{ matrix.name }}
