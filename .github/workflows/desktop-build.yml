@@ -14,17 +14,9 @@ on:
 
 jobs:
   build:
-    if: inputs.platform == 'all' || matrix.name == inputs.platform
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            name: macos-arm64
-          - os: windows-latest
-            name: windows-x64
-          - os: ubuntu-latest
-            name: linux-x64
+      matrix: ${{ fromJSON(inputs.platform == 'linux-x64' && '[{"os":"ubuntu-latest","name":"linux-x64"}]' || '[{"os":"macos-14","name":"macos-arm64"},{"os":"windows-latest","name":"windows-x64"},{"os":"ubuntu-latest","name":"linux-x64"}]') }}
 
     runs-on: ${{ matrix.os }}
 
