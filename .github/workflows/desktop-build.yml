@@ -2,9 +2,20 @@ name: Desktop Build
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Linux package to build
+        required: true
+        default: arch
+        type: choice
+        options:
+          - arch
+          - ubuntu
+          - all
 
 jobs:
   build:
+    if: ${{ inputs.target == 'all' || inputs.target == matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +58,7 @@ jobs:
             archlinux:latest \
             bash -lc '
               set -euo pipefail
-              # GitHub's Docker containers cannot mount FUSE AppImages.
+              # GitHub Docker containers cannot mount FUSE AppImages.
               # Tauri's linuxdeploy helper supports self-extraction instead.
               export APPIMAGE_EXTRACT_AND_RUN=1
               pacman -Syu --noconfirm
