@@ -1,6 +1,9 @@
 name: Windows Build
 
 on:
+  push:
+    branches:
+      - hybrid
   workflow_dispatch:
 
 permissions:
