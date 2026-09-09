@@ -163,7 +163,7 @@ export default function SettingsPage() {
 
           {!ollamaRunning && (
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
-              Start Ollama to see installed models.
+              Ollama is optional. News, saved links, and videos work without it; start Ollama only to enable AI summaries and research.
             </div>
           )}
 

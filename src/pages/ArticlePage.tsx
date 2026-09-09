@@ -14,7 +14,7 @@ export default function ArticlePage() {
   const [article, setArticle] = useState<Article | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>([]);
+  const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>();
 
   const articleId = idParam ? parseInt(idParam, 10) : NaN;
   const invalidId = !idParam || isNaN(articleId);

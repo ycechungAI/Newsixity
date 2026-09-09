@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   extractVideoInfo,
+  fetchYouTubePlaylist,
   isLinux,
   youtubePlayableUrl,
   type PlaylistItem,
@@ -61,6 +62,21 @@ export default function VideoEmbed({
   const [activeVideoId, setActiveVideoId] = useState(videoInfo?.videoId ?? "");
   const [playlistPage, setPlaylistPage] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchedPlaylistItems, setFetchedPlaylistItems] = useState<PlaylistItem[]>();
+  const effectivePlaylistItems = playlistItems ?? fetchedPlaylistItems;
+
+  // Cards in Others and Saved use this component directly, rather than the
+  // article page. Fetch the playlist here as a fallback so a playlist-only
+  // URL starts with its first real video instead of YouTube's unusable
+  // /embed/videoseries placeholder in those views.
+  useEffect(() => {
+    if (playlistItems !== undefined || !videoInfo?.playlistId) return;
+    let cancelled = false;
+    fetchYouTubePlaylist(videoInfo.playlistId).then((result) => {
+      if (!cancelled) setFetchedPlaylistItems(result.items);
+    });
+    return () => { cancelled = true; };
+  }, [playlistItems, videoInfo?.playlistId]);
 
   // Keyed off the CURRENT video (activeVideoId), not the original URL: a
   // playlist-only link starts with no videoId, and only resolves to a real
@@ -106,7 +122,7 @@ export default function VideoEmbed({
   useEffect(() => {
     if (activeVideoId) return;                       // A real video is loaded.
     if (!videoInfo?.playlistId) return;              // Not a playlist link.
-    const first = playlistItems?.[0];
+    const first = effectivePlaylistItems?.[0];
     if (!first) return;                              // Not fetched yet.
 
     setCurrentEmbedUrl(
@@ -114,7 +130,7 @@ export default function VideoEmbed({
     );
     setCurrentTitle(first.title);
     setActiveVideoId(first.videoId);
-  }, [activeVideoId, playlistItems, videoInfo?.playlistId]);
+  }, [activeVideoId, effectivePlaylistItems, videoInfo?.playlistId]);
 
   /**
    * Advance to the next playlist entry when the current one finishes.
@@ -129,11 +145,11 @@ export default function VideoEmbed({
    * naturally, as does switching the toggle off.
    */
   useEffect(() => {
-    if (!autoplayNext || !playlistItems?.length) return;
+    if (!autoplayNext || !effectivePlaylistItems?.length) return;
 
     const onEnded = () => {
-      const index = playlistItems.findIndex((i) => i.videoId === activeVideoId);
-      const next = index >= 0 ? playlistItems[index + 1] : undefined;
+      const index = effectivePlaylistItems.findIndex((i) => i.videoId === activeVideoId);
+      const next = index >= 0 ? effectivePlaylistItems[index + 1] : undefined;
       if (!next) return;  // End of the playlist — stop rather than loop.
 
       const nextUrl = hasActiveLinuxYouTube
@@ -150,7 +166,7 @@ export default function VideoEmbed({
 
     window.addEventListener("video-ended", onEnded);
     return () => window.removeEventListener("video-ended", onEnded);
-  }, [autoplayNext, playlistItems, activeVideoId, videoInfo?.playlistId, hasActiveLinuxYouTube]);
+  }, [autoplayNext, effectivePlaylistItems, activeVideoId, videoInfo?.playlistId, hasActiveLinuxYouTube]);
 
   const isAnimex = videoInfo?.type === "animex";
   const isDirect = videoInfo?.type === "direct";
@@ -303,15 +319,15 @@ export default function VideoEmbed({
       )}
 
       {/* Playlist (article detail page only) */}
-      {playlistItems && playlistItems.length > 0 && (() => {
-        const pageCount = Math.ceil(playlistItems.length / PLAYLIST_PAGE_SIZE);
+      {effectivePlaylistItems && effectivePlaylistItems.length > 0 && (() => {
+        const pageCount = Math.ceil(effectivePlaylistItems.length / PLAYLIST_PAGE_SIZE);
         const start = playlistPage * PLAYLIST_PAGE_SIZE;
-        const pageItems = playlistItems.slice(start, start + PLAYLIST_PAGE_SIZE);
+        const pageItems = effectivePlaylistItems.slice(start, start + PLAYLIST_PAGE_SIZE);
 
         return (
           <div className="vid-playlist">
             <div className="vid-playlist-title">
-              <span>Playlist ({playlistItems.length} videos)</span>
+              <span>Playlist ({effectivePlaylistItems.length} videos)</span>
               {/* The backend caches a playlist for 6 hours keyed by playlist
                   id, so videos added or removed on YouTube stay invisible —
                   and deleting the article does not help, because that only
@@ -380,7 +396,7 @@ export default function VideoEmbed({
                     aria-current={p === playlistPage ? "page" : undefined}
                   >
                     {p * PLAYLIST_PAGE_SIZE + 1}–
-                    {Math.min((p + 1) * PLAYLIST_PAGE_SIZE, playlistItems.length)}
+                    {Math.min((p + 1) * PLAYLIST_PAGE_SIZE, effectivePlaylistItems.length)}
                   </button>
                 ))}
               </div>
