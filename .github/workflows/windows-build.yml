@@ -25,8 +25,13 @@ jobs:
           cache: pip
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install frontend dependencies
+ 
+       - name: Cache Rust target
+         uses: Swatinem/rust-cache@v2
+         with:
+           workspaces: "src-tauri -> target"
+ 
+       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build frontend
