@@ -9,71 +9,77 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            name: linux-x64
+          - target: arch
+            name: linux-arch-x64
+            artifact_path: src-tauri/target/release/bundle/appimage/Newsixity-*.AppImage
+          - target: ubuntu
+            name: linux-ubuntu-x64
+            artifact_path: src-tauri/target/release/bundle/deb/*.deb
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # The hosted image's Chrome repository can occasionally publish a
-          # stale index during rotation; Chrome is not needed for this build.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential curl wget file
-
       - name: Setup Node
+        if: matrix.target == 'ubuntu'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Setup Python
+        if: matrix.target == 'ubuntu'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Setup Rust
+        if: matrix.target == 'ubuntu'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Setup Python venv
+      - name: Build Arch Linux AppImage
+        if: matrix.target == 'arch'
         shell: bash
         run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            archlinux:latest \
+            bash -lc '
+              set -euo pipefail
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed \
+                base-devel curl file git nodejs npm openssl patchelf python \
+                python-pip rustup wget webkit2gtk-4.1 libappindicator librsvg \
+                gst-plugins-base
+              rustup default stable
+              npm ci
+              python -m venv .venv
+              . .venv/bin/activate
+              python -m pip install -e "./backend[integrations,desktop]"
+              ./build-linux-arch.sh
+            '
+
+      - name: Build Ubuntu package
+        if: matrix.target == 'ubuntu'
+        shell: bash
+        run: |
+          # Chrome is not needed; omitting its occasionally stale repository
+          # keeps the runner's package update reliable.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl file libayatana-appindicator3-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf wget
+          npm ci
           python -m venv .venv
-          if [ -f .venv/bin/activate ]; then
-            source .venv/bin/activate
-          else
-            source .venv/Scripts/activate
-          fi
+          . .venv/bin/activate
           python -m pip install -e "./backend[integrations,desktop]"
+          ./build-linux-ubuntu.sh
 
-      - name: Build Tauri
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux needs the same WebKitGTK/GStreamer AppImage post-processing
-            # used by the local Linux build. The generic Tauri AppImage can
-            # abort at startup when it loads bundled graphics/media libraries.
-            ./build-linux-arch.sh
-          else
-            ./backend/build_sidecar.sh
-            npx tauri build
-          fi
-
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: newsixity-${{ matrix.name }}
-          path: |
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.AppImage
-          if-no-files-found: warn
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
