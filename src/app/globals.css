@@ -12,28 +12,26 @@
 
 /* ── Variables ─────────────────────────────── */
 :root {
-  --bg: #f4f4f4;
-  --surface: #ffffff;
-  --fg: #111111;
-  --muted: #555555;
-  --subtle: #888888;
-  --border: #dddddd;
-  --accent: #005fcc;
-  --accent-bg: #e8f0fe;
+  --bg: #0e0e0e;
+  --surface: #1a1a1a;
+  --fg: #e0e0e0;
+  --muted: #aaaaaa;
+  --subtle: #666666;
+  --border: #2c2c2c;
+  --accent: #4a90e2;
+  --accent-bg: #0a1628;
   --sidebar-w: 185px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e0e0e;
-    --surface: #1a1a1a;
-    --fg: #e0e0e0;
-    --muted: #aaaaaa;
-    --subtle: #666666;
-    --border: #2c2c2c;
-    --accent: #4a90e2;
-    --accent-bg: #0a1628;
-  }
+.light {
+  --bg: #f4f4f4;
+  --surface: #ffffff;
+  --fg: #000000;
+  --muted: #000000;
+  --subtle: #333333;
+  --border: #dddddd;
+  --accent: #005fcc;
+  --accent-bg: #e8f0fe;
 }
 
 /* Explicit dark mode via .dark class (toggled by ThemeProvider) */

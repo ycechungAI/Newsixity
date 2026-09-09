@@ -405,9 +405,12 @@ fn open_externally(url: &tauri::Url) {
     let result = std::process::Command::new("open").arg(target).spawn();
 
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", target])
-        .spawn();
+    // Do not use `cmd /C start` here. Even though `target` is passed as one
+    // Rust argument, cmd.exe reparses it as command text; URL query strings
+    // may legally contain shell metacharacters such as `&`. Launching
+    // Explorer directly keeps the URL as an argument and lets Windows hand
+    // the http(s) protocol to the user's default browser without a shell.
+    let result = std::process::Command::new("explorer.exe").arg(target).spawn();
 
     #[cfg(target_os = "linux")]
     let result = std::process::Command::new("xdg-open").arg(target).spawn();
