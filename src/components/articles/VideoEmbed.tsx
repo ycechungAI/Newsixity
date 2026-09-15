@@ -5,6 +5,8 @@ import {
   extractVideoInfo,
   fetchYouTubePlaylist,
   isLinux,
+  isMacOS,
+  isWindows,
   youtubePlayableUrl,
   type PlaylistItem,
 } from "@/lib/utils/video";
@@ -175,14 +177,21 @@ export default function VideoEmbed({
   // playlist UI in-app, but hand the selected YouTube video to the user's
   // browser instead of creating either an iframe or a native media element.
   const isLinuxYouTube = isLinux && videoInfo?.type === "youtube";
+  // A YouTube embed URL is an HTML page, not a playable media file, so it can
+  // only ever load inside an <iframe>. macOS (WKWebView) and Windows
+  // (WebView2) both ship DRM, so the embed plays directly there; Linux is
+  // handled by the isLinuxYouTube link-out above. The native <video> element
+  // is reserved for direct media files only.
+  const isMacYouTube =
+    isMacOS && videoInfo?.type === "youtube" && !!activeVideoId;
+  // Windows-specific carve-out: individual YouTube links must remain on the
+  // iframe path for WebView2 compatibility, never a native <video> element.
+  const isWindowsYouTube =
+    isWindows && videoInfo?.type === "youtube" && !!activeVideoId;
   const isNative =
     isDirect || (!isLinux && videoInfo?.type === "youtube" && !!activeVideoId);
-  
-  // Windows-specific fix: Individual YouTube links often fail to render in the internal 
-  // shared player if they are treated as 'native' (which targets a <video> element).
-  // They must remain as 'iframe' for Windows WebView2 compatibility.
-  const isWindowsNative = !isLinux && videoInfo?.type === "youtube" && !!activeVideoId;
-  const effectiveIsNative = isDirect || (isWindowsNative ? false : isNative);
+  const effectiveIsNative =
+    isDirect || ((isWindowsYouTube || isMacYouTube) ? false : isNative);
 
   /**
    * Canonical YouTube page for whatever is loaded right now.

@@ -18,6 +18,16 @@ export interface VideoInfo {
 export const isLinux =
   typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent);
 
+/** True on the packaged macOS app (WKWebView). */
+export const isMacOS =
+  typeof navigator !== "undefined" &&
+  /Macintosh|Mac OS X/i.test(navigator.userAgent) &&
+  !/iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+/** True on the packaged Windows app (WebView2). */
+export const isWindows =
+  typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+
 /** Stream URL for a YouTube video on Linux, else the direct iframe embed URL. */
 export function youtubePlayableUrl(videoId: string, playlistId?: string, maxHeight = 720): string {
   const base = `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`;

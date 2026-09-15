@@ -233,10 +233,17 @@ async fn start_backend_and_window(app: AppHandle, port: u16) -> anyhow::Result<(
     #[cfg(not(target_os = "linux"))]
     let (default_w, default_h, min_w, min_h) = (1400.0, 900.0, 900.0, 600.0);
 
-    let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url.clone()))
+    let window_builder = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url.clone()))
         .title("Newsixity")
         .inner_size(default_w, default_h)
-        .min_inner_size(min_w, min_h)
+        .min_inner_size(min_w, min_h);
+    // The frontend ships dark as its default theme, so on macOS force the
+    // native window chrome to match from launch even when the system is set
+    // to light appearance (macOS theme is app-wide; see WebviewWindowBuilder::theme).
+    #[cfg(target_os = "macos")]
+    let window_builder = window_builder.theme(Some(tauri::Theme::Dark));
+
+    let window = window_builder
         // Open a link in the system browser *only* when the frontend asks,
         // by navigating to OPEN_EXTERNAL_PATH on our own origin.
         //
