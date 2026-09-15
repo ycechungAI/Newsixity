@@ -1,0 +1,65 @@
+name: macOS Build
+
+on:
+  push:
+    branches:
+      - hybrid
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS app
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install backend build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "backend[integrations,desktop]"
+
+      - name: Freeze backend sidecar
+        shell: bash
+        run: |
+          pushd backend
+          pyinstaller --noconfirm newsixity-backend.spec
+          popd
+          mkdir -p src-tauri/resources
+          cp -R backend/dist/newsixity-backend src-tauri/resources/newsixity-backend
+
+      - name: Bundle macOS app
+        run: npx tauri build --bundles app,dmg
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: newsixity-macos
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
