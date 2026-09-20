@@ -26,13 +26,21 @@ echo ""
 
 # Step 2: Freeze the backend with PyInstaller.
 # Venv layout differs by platform: POSIX venvs put scripts in bin/, Windows
-# venvs (including CI runners under Git Bash) put them in Scripts/.
-if [ -x ".venv/bin/pyinstaller" ]; then
-    PYINSTALLER="$REPO_ROOT/.venv/bin/pyinstaller"
-elif [ -x ".venv/Scripts/pyinstaller.exe" ]; then
-    PYINSTALLER="$REPO_ROOT/.venv/Scripts/pyinstaller.exe"
-else
-    echo "ERROR: pyinstaller not found in .venv (checked bin/ and Scripts/)" >&2
+# venvs (including CI runners under Git Bash) put them in Scripts/. The
+# backend's own venv lives at backend/.venv (the repo-root `.venv` was the
+# old layout; CI installs into the runner's python instead), so we prefer
+# backend/.venv and fall back to the root location for older checkouts.
+for _vp in "$REPO_ROOT/backend/.venv" "$REPO_ROOT/.venv"; do
+    if [ -x "$_vp/bin/pyinstaller" ]; then
+        PYINSTALLER="$_vp/bin/pyinstaller"
+        break
+    elif [ -x "$_vp/Scripts/pyinstaller.exe" ]; then
+        PYINSTALLER="$_vp/Scripts/pyinstaller.exe"
+        break
+    fi
+done
+if [ -z "${PYINSTALLER:-}" ]; then
+    echo "ERROR: pyinstaller not found (checked backend/.venv and .venv, bin/ and Scripts/)" >&2
     exit 1
 fi
 
