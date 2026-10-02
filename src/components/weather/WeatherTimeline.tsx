@@ -37,10 +37,12 @@ const PAD_B = 30;
 
 interface Props {
   locations: SavedLocation[];
+  /** Lifted to the dashboard so the hero card follows this selection. */
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
 }
 
-export default function WeatherTimeline({ locations }: Props) {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+export default function WeatherTimeline({ locations, selectedId, onSelect }: Props) {
   const [metric, setMetric] = useState<Metric>("temp");
   const [history, setHistory] = useState<HistoryDay[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,9 +52,9 @@ export default function WeatherTimeline({ locations }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    if (locations.length === 0) { setSelectedId(null); return; }
-    if (!locations.some((l) => l.id === selectedId)) setSelectedId(locations[0].id);
-  }, [locations, selectedId]);
+    if (locations.length === 0) { onSelect(null); return; }
+    if (!locations.some((l) => l.id === selectedId)) onSelect(locations[0].id);
+  }, [locations, selectedId, onSelect]);
 
   const load = useCallback(async (id: number) => {
     setLoading(true);
@@ -236,7 +238,7 @@ export default function WeatherTimeline({ locations }: Props) {
           <select
             className="wx-timeline-select"
             value={selectedId ?? ""}
-            onChange={(e) => setSelectedId(Number(e.target.value))}
+            onChange={(e) => onSelect(Number(e.target.value))}
           >
             {locations.map((l) => (
               <option key={l.id} value={l.id}>

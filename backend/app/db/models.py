@@ -324,6 +324,11 @@ class WeatherLocation(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # The place the weather page opens on, and the one the hero card shows.
+    # Added post-hoc; init_db ALTERs it onto existing databases.
+    is_active: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
 
     __table_args__ = (

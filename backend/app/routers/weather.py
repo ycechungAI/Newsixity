@@ -23,6 +23,7 @@ from app.db.repository import (
     get_weather_daily,
     get_weather_observations,
     list_weather_locations,
+    set_active_weather_location,
     upsert_weather_daily,
 )
 from app.lib.integrations.weather import (
@@ -120,10 +121,27 @@ async def get_locations() -> dict:
                 "latitude": loc.latitude,
                 "longitude": loc.longitude,
                 "sortOrder": loc.sort_order,
+                "isActive": loc.is_active,
             }
             for loc in locations
         ]
     }
+
+
+@router.put("/weather/locations/active")
+async def set_active_location(location_id: int = Query(...)) -> dict:
+    """Persist which place the weather page opens on.
+
+    The frontend kept the selection in component state, so it reset to the
+    first place on every reload. Writing it here lets the hero card and the
+    timeline agree across restarts.
+    """
+    known = await asyncio.to_thread(list_weather_locations)
+    if not any(loc.id == location_id for loc in known):
+        raise HTTPException(status_code=404, detail="No such weather location")
+
+    await asyncio.to_thread(set_active_weather_location, location_id)
+    return {"id": location_id, "isActive": True}
 
 
 @router.post(

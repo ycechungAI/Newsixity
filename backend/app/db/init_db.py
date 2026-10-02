@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -31,11 +31,12 @@ DEFAULT_CATEGORIES: list[tuple[str, str, int]] = [
     ("Finance", "finance", 1),
     ("Gaming", "gaming", 2),
     ("Technology", "technology", 3),
-    ("Sports", "sports", 4),
-    ("Weather", "weather", 5),
-    ("Top News", "top-news", 6),
-    ("Others", "others", 7),
-    ("Security", "security", 9),
+    ("Consumer Tech", "consumer-tech", 4),
+    ("Sports", "sports", 5),
+    ("Weather", "weather", 6),
+    ("Top News", "top-news", 7),
+    ("Others", "others", 8),
+    ("Security", "security", 10),
 ]
 
 MANUAL_LINKS_FEED = {"name": "Manual Links", "url": "internal://manual", "enabled": 1}
@@ -157,6 +158,75 @@ def init_fts5_search(session: Session) -> bool:
         return False
 
 
+def _add_column_if_missing(session: Session, table: str, column: str, ddl: str) -> None:
+    """ALTER TABLE ... ADD COLUMN, but only if the column isn't already there.
+
+    There is no migration framework in this project, so columns introduced
+    after a table shipped are backfilled here at startup. Checking first keeps
+    it idempotent — SQLite has no ``ADD COLUMN IF NOT EXISTS``, and a bare
+    re-run would fail on the duplicate.
+    """
+    existing = {
+        row[1] for row in session.execute(text(f"PRAGMA table_info({table})"))
+    }
+    if not existing:
+        return  # table itself doesn't exist yet; create_all will make it whole
+    if column in existing:
+        return
+    logger.info("[Newsixity] Adding %s.%s to existing database", table, column)
+    session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
+# Feeds that changed category in v0.5. seed_feed() is keyed on URL alone and
+# uses ON CONFLICT DO NOTHING, so an existing feed is never re-categorised by
+# seeding alone — without this an upgraded install keeps the four device feeds
+# under technology forever and consumer-tech stays empty.
+FEED_CATEGORY_MOVES: list[tuple[str, str]] = [
+    ("https://9to5google.com/feed/", "consumer-tech"),
+    ("https://9to5mac.com/feed/", "consumer-tech"),
+    ("https://www.tomshardware.com/feeds/all", "consumer-tech"),
+    (
+        "https://www.newyorker.com/feed/science/science-and-technology/rss",
+        "consumer-tech",
+    ),
+]
+
+# DEFAULT_CATEGORIES sort_order changed in v0.5 (consumer-tech inserted at 4,
+# everything after shifted down). Existing rows keep their old numbers, which
+# would place the new section last. Re-apply the canonical ordering.
+CATEGORY_ORDER_SLUGS = [slug for _name, slug, _order in DEFAULT_CATEGORIES]
+
+
+def _migrate_categories_and_feeds(session: Session) -> None:
+    """Re-apply canonical category ordering and v0.5 feed moves.
+
+    Additive and idempotent: only writes rows whose current value differs, and
+    never inserts or deletes a feed or a category. Safe to run on every
+    startup.
+    """
+    # Canonical sort_order. The unique slug is the natural key, so this works
+    # regardless of the ids the categories happen to have.
+    for desired_order, slug in enumerate(CATEGORY_ORDER_SLUGS):
+        session.execute(
+            update(Category)
+            .where(Category.slug == slug)
+            .values(sort_order=desired_order)
+        )
+
+    for url, slug in FEED_CATEGORY_MOVES:
+        target = session.execute(
+            select(Category.id).where(Category.slug == slug)
+        ).scalar_one_or_none()
+        if target is None:
+            # consumer-tech doesn't exist yet — init_db seeds it just above.
+            continue
+        session.execute(
+            update(Feed).where(Feed.url == url).values(category_id=target)
+        )
+
+    session.commit()
+
+
 def _normalize_podcast_episode_dates(session: Session) -> None:
     """Backfill: normalize podcast episode ``published_at`` to ISO-8601.
 
@@ -219,6 +289,13 @@ def init_db() -> None:
             text("CREATE INDEX IF NOT EXISTS idx_articles_is_read_published ON articles(is_read, published_at DESC)")
         )
 
+        # Columns added after the tables were first created. create_all never
+        # alters an existing table, so an upgraded install would fail every
+        # SELECT that names them with "no such column".
+        _add_column_if_missing(session, "weather_locations", "is_active",
+                               "INTEGER NOT NULL DEFAULT 0")
+        session.commit()
+
     with SessionLocal() as session:
         init_fts5_search(session)
 
@@ -251,49 +328,15 @@ def init_db() -> None:
             )
             session.execute(stmt)
 
-        security_id = session.execute(
-            select(Category.id).where(Category.slug == "security")
-        ).scalar_one_or_none()
-
-        if security_id is not None:
-            security_feeds = [
-                {"name": "Data Breaches", "url": "https://databreaches.net/feed/"},
-                {"name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/"},
-                {"name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/"},
-                {"name": "The Hacker News", "url": "https://feeds.feedburner.com/TheHackersNews"},
-                {"name": "Schneier on Security", "url": "https://www.schneier.com/feed/atom/"},
-                {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
-            ]
-            for feed in security_feeds:
-                if feed["url"] in deleted_urls:
-                    continue
-                stmt = (
-                    sqlite_insert(Feed)
-                    .values(category_id=security_id, **feed)
-                    .on_conflict_do_nothing()
-                )
-                session.execute(stmt)
-
-        sports_id = session.execute(
-            select(Category.id).where(Category.slug == "sports")
-        ).scalar_one_or_none()
-
-        if sports_id is not None:
-            sports_feeds = [
-                {"name": "ESPN Tennis", "url": "https://www.espn.com/espn/rss/tennis/news"},
-                {"name": "Sportsnet", "url": "https://www.sportsnet.ca/rss"},
-                {"name": "ESPN Soccer", "url": "https://www.espn.com/espn/rss/soccer/news"},
-            ]
-            for feed in sports_feeds:
-                if feed["url"] in deleted_urls:
-                    continue
-                stmt = (
-                    sqlite_insert(Feed)
-                    .values(category_id=sports_id, **feed)
-                    .on_conflict_do_nothing()
-                )
-                session.execute(stmt)
+        # Every other default feed — including security and sports — lives in
+        # DEFAULT_FEEDS (app/lib/rss/feeds.py), so there is a single list of
+        # what a fresh install gets. Those two used to be duplicated here, which
+        # is how Hacker News ended up seeded under two different categories at
+        # once: seed_all_feeds() runs on every refresh and keys on URL alone.
 
         session.commit()
+
+    with SessionLocal() as session:
+        _migrate_categories_and_feeds(session)
 
     logger.info("Database initialized (schema ensured, defaults seeded).")

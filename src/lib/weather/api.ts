@@ -43,6 +43,22 @@ export interface SavedLocation {
   latitude: number;
   longitude: number;
   sortOrder: number;
+  /** The place the weather page opens on. */
+  isActive: boolean;
+}
+
+/**
+ * Persist the selected place.
+ *
+ * Fire-and-forget: a failed write must not break the switch. The in-memory
+ * selection has already updated, so the UI is correct either way — worst
+ * case it reverts to the last persisted choice on next reload.
+ */
+export async function setActiveLocation(id: number): Promise<void> {
+  const res = await fetch(`/api/weather/locations/active?location_id=${id}`, {
+    method: "PUT",
+  });
+  if (!res.ok) throw new Error(`Set active location error: ${res.status}`);
 }
 
 export interface HistoryDay {

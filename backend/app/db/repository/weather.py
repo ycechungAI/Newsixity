@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.models import WeatherDaily as DailyModel
@@ -29,6 +29,7 @@ class WeatherLocationItem:
     latitude: float
     longitude: float
     sort_order: int
+    is_active: bool
     created_at: str
 
 
@@ -64,6 +65,7 @@ def _row_to_location(row: LocationModel) -> WeatherLocationItem:
         latitude=row.latitude,
         longitude=row.longitude,
         sort_order=row.sort_order,
+        is_active=bool(row.is_active),
         created_at=row.created_at,
     )
 
@@ -138,6 +140,58 @@ def add_weather_location(
             )
         ).scalar_one()
         return row_id
+
+
+def set_active_weather_location(location_id: int) -> None:
+    """Make ``location_id`` the active place, clearing the flag elsewhere.
+
+    Exactly one row may be active, so this runs in a single transaction:
+    clear-all then set-one. Rows are only ever written one at a time here, so
+    there is no window in which two are flagged.
+    """
+    with SessionLocal() as db:
+        db.execute(update(LocationModel).values(is_active=0))
+        db.execute(
+            update(LocationModel)
+            .where(LocationModel.id == location_id)
+            .values(is_active=1)
+        )
+        db.commit()
+
+
+def get_active_weather_location() -> WeatherLocationItem | None:
+    """The persisted selection, or None if the user has never chosen one.
+
+    Also self-heals: if the active row was deleted (the DELETE endpoint does
+    not clear the flag), fall back to the first location so the page always
+    has something to show, and persist that choice.
+    """
+    with SessionLocal() as db:
+        row = db.execute(
+            select(LocationModel)
+            .where(LocationModel.is_active == 1)
+            .order_by(LocationModel.sort_order, LocationModel.id)
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if row is None:
+            row = db.execute(
+                select(LocationModel)
+                .order_by(LocationModel.sort_order, LocationModel.id)
+                .limit(1)
+            ).scalar_one_or_none()
+            if row is not None:
+                db.execute(
+                    update(LocationModel).values(is_active=0)
+                )
+                db.execute(
+                    update(LocationModel)
+                    .where(LocationModel.id == row.id)
+                    .values(is_active=1)
+                )
+                db.commit()
+
+        return _row_to_location(row) if row is not None else None
 
 
 def delete_weather_location(location_id: int) -> None:
