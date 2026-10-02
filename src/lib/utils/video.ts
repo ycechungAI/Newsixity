@@ -233,12 +233,51 @@ export interface PlaylistResult {
  * The backend returns every video in one response (see
  * backend/app/lib/utils/video.py); callers paginate for display.
  */
+/**
+ * playlist_id -> in-flight-or-resolved promise.
+ *
+ * VideoEmbed falls back to fetching its own playlist when the list view doesn't
+ * supply `playlistItems` (Others and Saved both do this), so a grid of cards
+ * for the same playlist would otherwise re-request per card. Storing the
+ * promise rather than the result also de-dupes concurrent callers.
+ *
+ * Backing this is the backend's persistent `youtube_playlist_cache` table, so
+ * a cold frontend memo still hits SQLite rather than YouTube.
+ */
+const playlistMemo = new Map<string, Promise<PlaylistResult>>();
+
 export async function fetchYouTubePlaylist(
   playlistId: string,
   /** Re-scrape instead of using the backend's 6-hour cache. Needed after
    *  the playlist is edited on YouTube, since the cache is keyed by playlist
    *  id — deleting and re-adding the article does not invalidate it. */
   refresh = false
+): Promise<PlaylistResult> {
+  if (!refresh) {
+    const memo = playlistMemo.get(playlistId);
+    // An in-flight promise is shared rather than duplicated, so a grid of
+    // cards for the same playlist issues one request, not one per card.
+    if (memo) return memo;
+  }
+
+  const pending = fetchPlaylistUncached(playlistId, refresh);
+  // A refresh replaces the memo too, so the user sees the re-scraped list.
+  playlistMemo.set(playlistId, pending);
+
+  try {
+    const result = await pending;
+    // Don't memoise an empty scrape — the next mount should be free to retry.
+    if (result.items.length === 0) playlistMemo.delete(playlistId);
+    return result;
+  } catch (err) {
+    playlistMemo.delete(playlistId);
+    throw err;
+  }
+}
+
+async function fetchPlaylistUncached(
+  playlistId: string,
+  refresh: boolean
 ): Promise<PlaylistResult> {
   const empty: PlaylistResult = { items: [], totalItems: 0, source: "none" };
   try {

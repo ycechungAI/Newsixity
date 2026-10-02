@@ -67,6 +67,18 @@ export default function VideoEmbed({
   const [fetchedPlaylistItems, setFetchedPlaylistItems] = useState<PlaylistItem[]>();
   const effectivePlaylistItems = playlistItems ?? fetchedPlaylistItems;
 
+  /**
+   * A YouTube playlist link whose first video hasn't resolved yet.
+   *
+   * There is no playable embed for this state, so the iframe must not mount —
+   * see the placeholder branch in the render.
+   */
+  const isAwaitingPlaylistItem =
+    videoInfo?.type === "youtube" &&
+    !videoInfo.videoId &&
+    !!videoInfo.playlistId &&
+    !activeVideoId;
+
   // Cards in Others and Saved use this component directly, rather than the
   // article page. Fetch the playlist here as a fallback so a playlist-only
   // URL starts with its first real video instead of YouTube's unusable
@@ -213,7 +225,7 @@ export default function VideoEmbed({
   const useShared = shared && !!videoInfo && !isAnimex && !isLinuxYouTube;
 
   const slotRef = useVideoSlot(
-    useShared
+    useShared && !isAwaitingPlaylistItem
       ? {
           key: slotKey ?? url,
           embedUrl: currentEmbedUrl,
@@ -259,7 +271,15 @@ export default function VideoEmbed({
             ref={slotRef}
             className="card-video is-slot"
             style={{ width: `${dockWidthPct}%` }}
-          />
+          >
+            {/* The shared player would otherwise mount
+                /embed/videoseries?list=... and show "Video unavailable". */}
+            {isAwaitingPlaylistItem && (
+              <div className="video-placeholder" role="status">
+                Loading playlist…
+              </div>
+            )}
+          </div>
           <div className="video-size-bar">
             <span className="video-size-label">Size</span>
             {SIZE_PRESETS.map((preset) => (
@@ -321,6 +341,16 @@ export default function VideoEmbed({
               controls
               style={{ width: "100%", height: "100%", objectFit: "contain" }}
             />
+          ) : isAwaitingPlaylistItem ? (
+            /* A playlist link has no video id of its own, and the effect
+               above swaps in the first real video once the playlist loads.
+               Until then `currentEmbedUrl` is /embed/videoseries?list=...,
+               which renders YouTube's own "Video unavailable" — so mounting
+               it just shows an error where a video will shortly be. Show the
+               spinner instead. */
+            <div className="video-placeholder" role="status">
+              Loading playlist…
+            </div>
           ) : (
             <iframe
               src={currentEmbedUrl}
