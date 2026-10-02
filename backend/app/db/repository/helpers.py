@@ -113,6 +113,7 @@ SUMMARIZE_CATEGORY_PRIORITY = [
     "world-news",
     "gaming",
     "sports",
+    "consumer-tech",
 ]
 
 # Sports title filter patterns.

@@ -14,6 +14,7 @@ const LABELS: Record<string, string> = {
   finance:      "Finance",
   gaming:       "Gaming",
   technology:   "Tech",
+  "consumer-tech": "Consumer",
   sports:       "Sports",
   weather:      "Weather",
   "top-news":   "Top News",

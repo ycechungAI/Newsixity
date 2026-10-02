@@ -10,7 +10,7 @@ from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
 from app.db.session import SessionLocal
 
-CAPPED_CATEGORIES = ["finance", "gaming", "sports", "world-news"]
+CAPPED_CATEGORIES = ["finance", "gaming", "sports", "world-news", "consumer-tech"]
 DAILY_ARTICLE_LIMIT = 20
 FINANCE_DAILY_INSERT_CAP = 20
 MAX_UNSUMMARIZED_QUEUE = 2000

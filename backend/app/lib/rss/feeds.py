@@ -17,12 +17,13 @@ logger = logging.getLogger("newsixity")
 # slug -> [{"name", "url"}, ...]; identical to DEFAULT_FEEDS in feeds.ts.
 DEFAULT_FEEDS: dict[str, list[dict[str, str]]] = {
     "world-news": [
-        {"name": "Reuters - World", "url": "https://feeds.reuters.com/Reuters/worldNews"},
         {"name": "BBC News - World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml"},
         {"name": "BBC News - Top Stories", "url": "https://feeds.bbci.co.uk/news/rss.xml"},
         {"name": "NPR News", "url": "https://feeds.npr.org/1001/rss.xml"},
         {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml"},
-        {"name": "Associated Press", "url": "https://rsshub.app/apnews/topics/apf-topnews"},
+        {"name": "Politico", "url": "https://rss.politico.com/politics-news.xml"},
+        {"name": "The New Yorker", "url": "https://www.newyorker.com/feed/latest/rss"},
+        {"name": "The Register", "url": "https://www.theregister.com/headlines.atom"},
     ],
     "finance": [
         {"name": "MarketWatch - Top Stories", "url": "https://feeds.marketwatch.com/marketwatch/topstories"},
@@ -37,19 +38,31 @@ DEFAULT_FEEDS: dict[str, list[dict[str, str]]] = {
         {"name": "PC Gamer", "url": "https://www.pcgamer.com/rss/"},
         {"name": "Eurogamer", "url": "https://www.eurogamer.net/feed"},
         {"name": "Rock Paper Shotgun", "url": "https://www.rockpapershotgun.com/feed"},
+        {"name": "GameSpot", "url": "https://www.gamespot.com/feeds/mashup/"},
     ],
     "technology": [
         {"name": "TechCrunch", "url": "https://techcrunch.com/feed/"},
         {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
         {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index"},
         {"name": "Wired", "url": "https://www.wired.com/feed/rss"},
-        {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
+        {"name": "Engadget", "url": "https://www.engadget.com/rss.xml"},
+    ],
+    # Device- and platform-specific coverage, split out of technology: these
+    # update far more often than the industry feeds above and would otherwise
+    # dominate a shared daily insert cap.
+    "consumer-tech": [
+        {"name": "9to5 Google", "url": "https://9to5google.com/feed/"},
+        {"name": "9to5Mac", "url": "https://9to5mac.com/feed/"},
+        {"name": "Tom’s Hardware", "url": "https://www.tomshardware.com/feeds/all"},
+        {"name": "New Yorker Tech", "url": "https://www.newyorker.com/feed/science/science-and-technology/rss"},
     ],
     "sports": [
         {"name": "ESPN - Top Headlines", "url": "https://www.espn.com/espn/rss/news"},
         {"name": "BBC Sport", "url": "https://feeds.bbci.co.uk/sport/rss.xml"},
         {"name": "CBS Sports", "url": "https://www.cbssports.com/rss/headlines/"},
-        {"name": "Bleacher Report", "url": "https://bleacherreport.com/articles/feed"},
+        {"name": "ESPN Soccer", "url": "https://www.espn.com/espn/rss/soccer/news"},
+        {"name": "ESPN Tennis", "url": "https://www.espn.com/espn/rss/tennis/news"},
+        {"name": "Sportsnet", "url": "https://www.sportsnet.ca/rss"},
     ],
     "weather": [
         {"name": "Weather.gov Alerts", "url": "https://alerts.weather.gov/cap/us.php?x=1"},
@@ -62,6 +75,18 @@ DEFAULT_FEEDS: dict[str, list[dict[str, str]]] = {
         {"name": "Reuters - Top News", "url": "https://feeds.reuters.com/reuters/topNews"},
         {"name": "CNN - Top Stories", "url": "https://rss.cnn.com/rss/edition.rss"},
         {"name": "Google News", "url": "https://news.google.com/rss"},
+    ],
+    # Was seeded separately by init_db, which meant a fresh install and an
+    # upgraded one disagreed about what the defaults were. Hacker News is
+    # listed here only — it also used to be seeded under technology, which put
+    # it in two categories at once.
+    "security": [
+        {"name": "Data Breaches", "url": "https://databreaches.net/feed/"},
+        {"name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/"},
+        {"name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/"},
+        {"name": "The Hacker News", "url": "https://feeds.feedburner.com/TheHackersNews"},
+        {"name": "Schneier on Security", "url": "https://www.schneier.com/feed/atom/"},
+        {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
     ],
 }
 
