@@ -229,7 +229,20 @@ export default function SettingsPage() {
                   <span className="feed-name">{f.name}</span>
                   <select
                     className="feed-select"
-                    value={feedWeights[f.id] ?? 1.0}
+                    /*
+                     * Keys must be the *stringified* weight, not the number.
+                     * React matches <select> values as strings, and String(1.0)
+                     * is "1" while the option's value is "1.0" — so a feed set
+                     * to Normal matched no option and the browser fell back to
+                     * the first one, displaying Low. Picking Normal then
+                     * appeared not to stick.
+                     *
+                     * toFixed(1) normalizes every weight to the same shape the
+                     * options use, so stored values outside the four presets
+                     * fall through to the browser's default rather than
+                     * silently displaying the wrong preset.
+                     */
+                    value={(feedWeights[f.id] ?? 1.0).toFixed(1)}
                     onChange={e => updateFeedWeight(f.id, parseFloat(e.target.value))}
                   >
                     <option value="0.5">Low (0.5×)</option>
