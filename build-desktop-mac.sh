@@ -27,6 +27,81 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
+# Rust lives in ~/.cargo (rustup); make sure it's visible even when this
+# script runs from a non-login shell (IDE, agent, double-click), where
+# ~/.zprofile was never sourced and cargo would otherwise not be found.
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "ERROR: cargo not found. Install Rust first:" >&2
+    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" >&2
+    exit 1
+fi
+
+# Tauri's macOS build needs the Xcode Command Line Tools: cc for linking
+# the Rust binary, codesign for the .app, hdiutil for the .dmg. Without
+# them `npx tauri build` dies with cryptic linker errors.
+if ! xcode-select -p >/dev/null 2>&1; then
+    echo "ERROR: Xcode Command Line Tools not found. Install them with:" >&2
+    echo "  xcode-select --install" >&2
+    exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm not found. Install Node.js first (https://nodejs.org/):" >&2
+    echo "  brew install node" >&2
+    exit 1
+fi
+
+# --- Self-healing first-time setup --------------------------------------
+# A fresh checkout (or a new Mac) is missing things the build needs. Set
+# them up here automatically instead of failing with cryptic errors.
+
+# 1. Frontend dependencies: `vite: command not found` on a fresh clone
+#    just means node_modules was never installed.
+if [ ! -d "node_modules" ]; then
+    echo "📦 node_modules not found — installing frontend dependencies (npm ci)..."
+    npm ci
+fi
+
+# 2. Backend venv: pyproject requires Python >= 3.11, but macOS ships
+#    python3 = 3.9, which pip rejects with a confusing error. Pick the
+#    newest suitable interpreter explicitly, and recreate a venv that was
+#    built with the wrong Python.
+pick_python() {
+    for _py in python3.12 python3.11 python3; do
+        if command -v "$_py" >/dev/null 2>&1 \
+            && "$_py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+            echo "$_py"
+            return 0
+        fi
+    done
+    return 1
+}
+
+VENV="$REPO_ROOT/backend/.venv"
+if [ ! -x "$VENV/bin/pyinstaller" ]; then
+    if [ -x "$VENV/bin/python" ] \
+        && ! "$VENV/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+        echo "⚠️  backend/.venv was built with an unsuitable Python — recreating it..."
+        rm -rf "$VENV"
+    fi
+    if [ ! -x "$VENV/bin/python" ]; then
+        PYBIN="$(pick_python)" || {
+            echo "ERROR: need Python >= 3.11, none found. Install one with:" >&2
+            echo "  brew install python@3.12" >&2
+            exit 1
+        }
+        echo "📦 Creating backend/.venv with $PYBIN..."
+        "$PYBIN" -m venv "$VENV"
+        # Fresh venvs ship an ancient pip that can't do editable installs
+        # with the hatchling build backend — upgrade it first.
+        "$VENV/bin/pip" install --quiet --upgrade pip
+    fi
+    echo "📦 Installing backend dependencies into backend/.venv..."
+    "$VENV/bin/pip" install -e "$REPO_ROOT/backend[integrations,desktop]"
+fi
+# --- end self-healing ---------------------------------------------------
+
 ./backend/build_sidecar.sh
 
 BUNDLE="src-tauri/target/release/bundle"
@@ -36,7 +111,14 @@ BUNDLE="src-tauri/target/release/bundle"
 rm -f "$BUNDLE"/macos/rw.*.dmg 2>/dev/null || true
 
 echo "📦 Building Tauri app bundle..."
-npx tauri build
+# A failing DMG step (bundle_dmg.sh drives Finder via AppleScript, which
+# fails without automation permission, e.g. from a non-interactive shell)
+# makes `tauri build` exit non-zero after the .app is already complete.
+# Under `set -e` that skipped the verification below entirely — let the
+# verification decide instead.
+if ! npx tauri build; then
+    echo "⚠️  tauri build exited non-zero (usually the DMG step) — verifying the .app..."
+fi
 
 APP="$BUNDLE/macos/Newsixity.app"
 

@@ -23,6 +23,8 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
 import app.db.repository.articles as articles_module
+import app.db.repository.feeds as feeds_module
+import app.db.repository.stats as stats_module
 import app.db.repository.weather as weather_module
 from app.db.init_db import init_fts5_search
 from app.db.models import Article, Base, Category, Feed
@@ -49,6 +51,8 @@ def engine(tmp_path):
 def session_factory(engine, monkeypatch):
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     monkeypatch.setattr(articles_module, "SessionLocal", factory)
+    monkeypatch.setattr(feeds_module, "SessionLocal", factory)
+    monkeypatch.setattr(stats_module, "SessionLocal", factory)
     monkeypatch.setattr(weather_module, "SessionLocal", factory)
     with factory() as s:
         init_fts5_search(s)
@@ -227,6 +231,112 @@ class TestCascadeDeletesLeaveNoOrphans:
 
         with session_factory() as s:
             assert s.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+
+class TestDeletingAFeed:
+    """v0.4 §1: deleting a feed cascades its unsaved articles and keeps saved
+    ones (reassigned to Manual Links) — never orphans, never loses saves."""
+
+    @pytest.fixture
+    def setup(self, session_factory):
+        feed_id = _feed(session_factory)
+        with session_factory() as s:
+            cat_id = s.execute(text("SELECT category_id FROM feeds WHERE id=:i"), {"i": feed_id}).scalar()
+            manual = Feed(name="Manual Links", url="internal://manual", category_id=cat_id)
+            other = Feed(name="Other", url="https://other.example/f.xml", category_id=cat_id)
+            s.add_all([manual, other])
+            s.commit()
+            ids = {"feed": feed_id, "manual": manual.id, "other": other.id, "cat": cat_id}
+        ids["unsaved"] = _add(session_factory, feed_id, guid="u1", title="Doomed zebra story")
+        ids["saved"] = _add(session_factory, feed_id, guid="s1", title="Kept saved giraffe")
+        ids["kept_other"] = _add(session_factory, ids["other"], guid="o1", title="Other feed okapi")
+        # Manual Links already has an article with the same guid — the
+        # reassignment must not trip the (feed_id, guid) unique constraint.
+        _add(session_factory, ids["manual"], guid="s1", title="Manual same guid")
+        with session_factory() as s:
+            s.execute(text("UPDATE articles SET is_saved=1 WHERE id=:i"), {"i": ids["saved"]})
+            s.execute(
+                text("INSERT INTO article_research(article_id, question, answer, sources) "
+                     "VALUES (:a, 'q', 'a', '[]')"),
+                {"a": ids["unsaved"]},
+            )
+            # One topic group spanning both feeds, represented by the doomed article.
+            s.execute(
+                text("INSERT INTO article_groups(id, label, category_id, representative_id, article_count) "
+                     "VALUES (1, 'Mixed', :c, :r, 2), (2, 'Solo', :c, :r, 1)"),
+                {"c": cat_id, "r": ids["unsaved"]},
+            )
+            s.execute(text("UPDATE articles SET group_id=1 WHERE id IN (:a, :b)"),
+                      {"a": ids["unsaved"], "b": ids["kept_other"]})
+            s.execute(text("UPDATE articles SET group_id=2 WHERE id=:a"), {"a": ids["saved"]})
+            s.commit()
+        return ids
+
+    def test_unsaved_articles_deleted_saved_reassigned(self, session_factory, setup):
+        result = feeds_module.delete_feed(setup["feed"])
+        assert result == {"deletedArticles": 1, "keptSavedArticles": 1}
+        with session_factory() as s:
+            assert s.execute(text("SELECT count(*) FROM articles WHERE id=:i"), {"i": setup["unsaved"]}).scalar() == 0
+            feed_of_saved = s.execute(text("SELECT feed_id FROM articles WHERE id=:i"), {"i": setup["saved"]}).scalar()
+            assert feed_of_saved == setup["manual"]
+            assert s.execute(text("SELECT count(*) FROM feeds WHERE id=:i"), {"i": setup["feed"]}).scalar() == 0
+
+    def test_no_orphans_and_fts_in_sync(self, session_factory, setup):
+        feeds_module.delete_feed(setup["feed"])
+        with session_factory() as s:
+            assert s.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+            assert s.execute(text("SELECT count(*) FROM article_research")).scalar() == 0
+        assert _fts_count(session_factory, "zebra") == 0
+        assert _fts_count(session_factory, "giraffe") == 1
+        assert _index_size(session_factory) == _article_count(session_factory)
+
+    def test_groups_repaired_or_removed(self, session_factory, setup):
+        feeds_module.delete_feed(setup["feed"])
+        with session_factory() as s:
+            rows = s.execute(text("SELECT id, representative_id, article_count FROM article_groups ORDER BY id")).fetchall()
+        # Group 1 survives with the other feed's article as representative;
+        # group 2 lost its only member to reassignment (group_id cleared).
+        assert [tuple(r) for r in rows] == [(1, setup["kept_other"], 1)]
+
+    def test_deleted_url_is_tombstoned_against_reseeding(self, session_factory, setup):
+        feeds_module.delete_feed(setup["feed"])
+        with session_factory() as s:
+            assert "https://e.com/f.xml" in feeds_module.get_deleted_feed_urls(s)
+        # Re-adding it by hand lifts the tombstone.
+        feeds_module.create_feed("https://e.com/f.xml", "F again", "world")
+        with session_factory() as s:
+            assert "https://e.com/f.xml" not in feeds_module.get_deleted_feed_urls(s)
+
+    def test_manual_links_feed_is_protected(self, session_factory, setup):
+        with pytest.raises(feeds_module.ProtectedFeedError):
+            feeds_module.delete_feed(setup["manual"])
+        with pytest.raises(feeds_module.ProtectedFeedError):
+            feeds_module.update_feed(setup["manual"], enabled=False)
+
+
+class TestDefaultFeedSeeding:
+    """seed_all_feeds() runs on every RSS refresh, so it must tolerate any
+    state the user can put a default feed in."""
+
+    def _feeds(self, session_factory):
+        with session_factory() as s:
+            return s.execute(text("SELECT name, url FROM feeds ORDER BY id")).fetchall()
+
+    def test_renamed_or_moved_default_feed_does_not_abort(self, session_factory):
+        _feed(session_factory)  # category "world", feed https://e.com/f.xml named "F"
+        with session_factory() as s:
+            s.add(Category(name="Tech", slug="tech"))
+            s.commit()
+        # Same URL, different name and category: used to raise IntegrityError
+        # on the url unique constraint and kill the whole refresh.
+        stats_module.seed_feed("tech", "Default Name", "https://e.com/f.xml")
+        assert [tuple(r) for r in self._feeds(session_factory)] == [("F", "https://e.com/f.xml")]
+
+    def test_deleted_default_feed_is_not_reseeded(self, session_factory):
+        feed_id = _feed(session_factory)
+        feeds_module.delete_feed(feed_id)
+        stats_module.seed_feed("world", "F", "https://e.com/f.xml")
+        assert self._feeds(session_factory) == []
 
 
 class TestRetentionDeletesOnlyTheRightSide:

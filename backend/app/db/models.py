@@ -228,6 +228,27 @@ class MarketHeatmapSnapshot(Base):
     )
 
 
+class DailyBriefing(Base):
+    """One AI briefing per local date (v0.4 §3). The unique date is what makes
+    "generate once, serve many times" safe — same shape as the heatmap
+    snapshots above. ``sources`` is a JSON list of {n, articleId, title} so
+    the [n] citations in ``content`` can link back to articles."""
+
+    __tablename__ = "daily_briefing"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'[]'"))
+    model: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = (
+        Index("idx_daily_briefing_date", text("date DESC")),
+        {"sqlite_autoincrement": True},
+    )
+
+
 class UserPreference(Base):
     __tablename__ = "user_preferences"
 

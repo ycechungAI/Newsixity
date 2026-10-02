@@ -1,6 +1,6 @@
 [package]
 name = "newsixity"
-version = "0.3.0"
+version = "0.4.0"
 description = "Newsixity desktop app"
 authors = ["ycechung"]
 edition = "2021"

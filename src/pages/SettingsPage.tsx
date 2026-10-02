@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import FeedManager from "@/components/settings/FeedManager";
+import SearchLinksManager from "@/components/settings/SearchLinksManager";
 
 interface OllamaModel   { name: string; size: string | number; modified?: string }
 interface SuggestedModel { name: string; size: string; description: string; recommended: boolean; installed: boolean }
@@ -205,6 +207,10 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      <FeedManager />
+
+      <SearchLinksManager />
 
       {/* Feed Rankings */}
       <div className="settings-section">

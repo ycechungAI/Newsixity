@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import type { Article, Category } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
@@ -7,6 +7,7 @@ import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
 import { RefreshButton } from "@/components/ui/RefreshButton";
 import AddLinkButton from "@/components/ui/AddLinkButton";
+import CategorySearchBox from "@/components/ui/CategorySearchBox";
 
 type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
 
@@ -114,6 +115,8 @@ function CategoryPageInner({ slug }: { slug: string }) {
           <RefreshButton />
         </div>
       </div>
+
+      <CategorySearchBox slug={slug} name={categoryName} />
 
       <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
 

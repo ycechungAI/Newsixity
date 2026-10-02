@@ -1,6 +1,6 @@
 [project]
 name = "newsixity-backend"
-version = "0.3.0"
+version = "0.4.0"
 authors = [{ name = "ycechung" }]
 description = "Newsixity FastAPI backend (migrated from Next.js). Serves the built SPA and the /api surface."
 requires-python = ">=3.11"

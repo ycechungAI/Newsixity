@@ -37,6 +37,8 @@ export interface Article {
   fetchedAt: string;
   relevanceScore: number;
   isPromoted: boolean;
+  /** Search results only: snippet with <mark> around matched terms. */
+  highlight?: string | null;
 }
 
 export interface ArticleGroup {

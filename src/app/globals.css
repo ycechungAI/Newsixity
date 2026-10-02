@@ -20,6 +20,7 @@
   --border: #2c2c2c;
   --accent: #4a90e2;
   --accent-bg: #0a1628;
+  --danger: #f87171;
   --sidebar-w: 185px;
 }
 
@@ -32,6 +33,7 @@
   --border: #dddddd;
   --accent: #005fcc;
   --accent-bg: #e8f0fe;
+  --danger: #b91c1c;
 }
 
 /* Explicit dark mode via .dark class (toggled by ThemeProvider) */
@@ -44,6 +46,7 @@
   --border: #2c2c2c;
   --accent: #4a90e2;
   --accent-bg: #0a1628;
+  --danger: #f87171;
 }
 
 /* ── Base ──────────────────────────────────── */
@@ -2693,4 +2696,164 @@ select {
 .vid-autoplay-btn.active {
   color: #4ade80;
   border-color: #1e4a2a;
+}
+
+/* ── Ask Newsixity ─────────────────────────── */
+.ask-page { max-width: 760px; }
+.ask-turn {
+  margin-bottom: 16px;
+}
+.ask-question {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.ask-answer {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+.ask-cite {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ask-page a { color: var(--accent); text-decoration: none; }
+.ask-page a:hover { text-decoration: underline; }
+.ask-sources {
+  list-style: none;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ask-sources li { margin-bottom: 2px; }
+.ask-notice {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ask-fallback { list-style: none; }
+.ask-fallback li {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 4px;
+}
+.ask-fallback li a { display: block; padding: 6px 8px; color: var(--fg); }
+.ask-fallback li a:hover { text-decoration: none; border-color: var(--accent); }
+.ask-fallback-title { font-size: 12px; font-weight: 600; }
+.ask-fallback-summary { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.ask-fallback-meta { font-size: 10px; color: var(--subtle); margin-top: 2px; }
+.ask-loading {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0;
+}
+.ask-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin: 8px 0;
+}
+.ask-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* ── Settings › Feeds ──────────────────────── */
+.feed-add-form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.feed-add-form .settings-input { min-width: 140px; }
+.feed-manage-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.feed-row.is-disabled .feed-name { color: var(--subtle); text-decoration: line-through; }
+.feed-error { color: var(--danger); font-size: 10px; }
+
+/* ── Search ────────────────────────────────── */
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.search-filters label { display: inline-flex; align-items: center; gap: 4px; }
+.search-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+.search-links-label { color: var(--muted); margin-right: 2px; }
+.search-link-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
+  padding: 1px 7px;
+  text-decoration: none;
+}
+.search-link-chip:hover { border-color: var(--accent); }
+.search-links-edit { color: var(--subtle); margin-left: 4px; }
+mark {
+  background: var(--accent-bg);
+  color: var(--fg);
+  font-weight: 600;
+  padding: 0 1px;
+}
+.remote-results { margin-top: 16px; }
+.remote-results .article-meta a { color: var(--subtle); }
+.search-in-category {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.search-in-category .settings-input { max-width: 260px; }
+
+/* ── Daily briefing ────────────────────────── */
+.briefing-page { max-width: 760px; }
+.briefing-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.briefing-list { padding-left: 16px; }
+.briefing-list li { margin-bottom: 8px; }
+.briefing-prose p { margin-bottom: 8px; }
+.briefing-page a { color: var(--accent); text-decoration: none; }
+.briefing-page a:hover { text-decoration: underline; }
+.briefing-meta {
+  font-size: 10px;
+  color: var(--subtle);
+  margin: 6px 0 10px;
+}
+.briefing-sources {
+  font-size: 11px;
+  color: var(--muted);
+}
+.briefing-sources summary { cursor: pointer; margin-bottom: 4px; }
+.briefing-sources ol { list-style: none; }
+.briefing-sources li { margin-bottom: 2px; }
+.briefing-feed { color: var(--subtle); }
+
+/* ── Topics view ───────────────────────────── */
+.topic-group.is-topic { margin-bottom: 4px; }
+.topic-group .group-more-btn { padding: 0 0 2px 14px; font-size: 10px; }
+.topic-group .group-others {
+  margin-left: 14px;
+  border-left: 2px solid var(--border);
 }

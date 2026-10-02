@@ -30,7 +30,7 @@ import pytest
 from app.lib.integrations import ollama as ollama_lib
 from app.routers import ollama as ollama_router
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
 
 # Reproduces the exact failure: app.main imports the ollama router, whose
 # module-level `from ollama import AsyncClient` used to raise ImportError.

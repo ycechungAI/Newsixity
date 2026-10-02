@@ -4,12 +4,95 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
 import feedparser
 import httpx
 
+from app.lib.integrations.content import resolves_to_blocked_ip
+from app.lib.utils.url import parse_http_url
+
 FEED_FETCH_TIMEOUT_SECONDS = 15
 FEED_USER_AGENT = "Newsixity/1.0"
+MAX_FEED_REDIRECTS = 5
+MAX_FEED_BYTES = 10 * 1024 * 1024
+
+
+class UnsafeFeedUrlError(ValueError):
+    """The URL (or a redirect hop) failed the SSRF gate."""
+
+
+def _check_feed_url(url: str) -> str:
+    safe_url = parse_http_url(url)
+    if not safe_url:
+        raise UnsafeFeedUrlError("Feed URL must be a valid http/https URL")
+    if resolves_to_blocked_ip(urlparse(safe_url).hostname):
+        raise UnsafeFeedUrlError("Feed URL resolves to a blocked address")
+    return safe_url
+
+
+def _feed_client(timeout: float = FEED_FETCH_TIMEOUT_SECONDS) -> httpx.Client:
+    # Redirects are followed by hand in fetch_feed_bytes so each hop is gated.
+    return httpx.Client(
+        timeout=timeout,
+        follow_redirects=False,
+        headers={"User-Agent": FEED_USER_AGENT},
+    )
+
+
+def fetch_feed_bytes(url: str, timeout: float = FEED_FETCH_TIMEOUT_SECONDS) -> bytes:
+    """GET a feed through the SSRF gate, re-checking every redirect hop.
+
+    Users can add feeds (v0.4), so this is the one place an arbitrary
+    outbound address reaches the server. The gate is the same pair
+    fetch_podcast_feed uses — parse_http_url() + resolves_to_blocked_ip() —
+    but applied per hop: with follow_redirects=True a public URL could
+    302 to 127.0.0.1 and the first check would never see it.
+    """
+    current = _check_feed_url(url)
+    with _feed_client(timeout) as client:
+        for _ in range(MAX_FEED_REDIRECTS + 1):
+            with client.stream("GET", current) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location", "")
+                    current = _check_feed_url(urljoin(current, location))
+                    continue
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                size = 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_FEED_BYTES:
+                        raise ValueError("Feed is larger than 10 MB")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise ValueError("Too many redirects")
+
+
+@dataclass
+class FeedProbe:
+    """What a URL turned out to be when checked before saving it as a feed."""
+
+    url: str
+    title: str | None
+    entry_count: int
+
+
+def probe_feed(url: str) -> FeedProbe:
+    """Fetch a candidate feed URL and confirm it parses as RSS/Atom.
+
+    Raises ValueError with a user-facing reason otherwise — a feed row that
+    silently never fetches is the failure this exists to prevent.
+    """
+    content = fetch_feed_bytes(url)
+    parsed = feedparser.parse(content)
+    title = (parsed.get("feed", {}).get("title") or "").strip() or None
+    entries = parsed.get("entries", [])
+    if not entries and not title:
+        raise ValueError("That URL did not return an RSS or Atom feed")
+    if parsed.get("bozo") and not entries:
+        raise ValueError("The feed could not be parsed")
+    return FeedProbe(url=_check_feed_url(url), title=title, entry_count=len(entries))
 
 
 @dataclass
@@ -49,15 +132,10 @@ def fetch_feed(url: str) -> list[ParsedArticle]:
     feedparser.parse() has no timeout parameter, so we fetch the bytes with
     httpx (real connect/read timeout + correct User-Agent) and hand the raw
     content to feedparser. Runs in a worker thread via fetch_all_feeds_sync.
+    Goes through the SSRF gate (fetch_feed_bytes) because feed URLs are now
+    user-supplied.
     """
-    response = httpx.get(
-        url,
-        timeout=FEED_FETCH_TIMEOUT_SECONDS,
-        follow_redirects=True,
-        headers={"User-Agent": FEED_USER_AGENT},
-    )
-    response.raise_for_status()
-    feed_data = feedparser.parse(response.content)
+    feed_data = feedparser.parse(fetch_feed_bytes(url))
 
     articles = []
     for entry in feed_data.get("entries", []):
@@ -155,7 +233,9 @@ def fetch_all_feeds_sync() -> list[FeedResult]:
     from app.db.repository.feeds import update_feed_last_fetched, update_feed_last_error
     from app.db.repository import get_enabled_feeds
 
-    enabled_feeds = get_enabled_feeds()
+    # internal:// feeds (Manual Links) hold user-added articles and have
+    # nothing to fetch; trying recorded a bogus last_error every refresh.
+    enabled_feeds = [f for f in get_enabled_feeds() if not f.url.startswith("internal://")]
 
     results: list[FeedResult] = []
     concurrency_limit = 5

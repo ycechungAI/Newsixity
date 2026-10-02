@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import type { Category } from "@/types";
 import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
 import ThemeProvider from "@/components/ThemeProvider";
+import OllamaStartPrompt from "@/components/OllamaStartPrompt";
 import { VideoPlayerProvider } from "@/components/video/VideoPlayerHost";
 import { installExternalLinkHandler } from "@/lib/ui/externalLinks";
 import "./app/globals.css";
@@ -48,6 +49,8 @@ export default function App() {
             <Outlet />
           </div>
         </div>
+        {/* Asks to start Ollama only when the binary is installed but idle. */}
+        <OllamaStartPrompt />
       </VideoPlayerProvider>
     </ThemeProvider>
   );
