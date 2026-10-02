@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.db.models import PodcastEpisode, PodcastFeed
 from app.db.session import SessionLocal
 from app.lib.podcast.parser import (
+    extract_podcast_episodes,
     extract_podcast_feed_info,
     fetch_podcast_feed,
 )
@@ -49,7 +50,16 @@ def subscribe_podcast(payload: PodcastSubscribeSchema):
         except Exception:
             raise HTTPException(status_code=400, detail="Could not fetch feed")
 
-        if feed_data.bozo:
+        # feedparser only sets bozo for XML it managed to start parsing, so a
+        # plain HTML page comes back clean-but-empty. Require actual content,
+        # matching probe_feed's check in app.lib.integrations.rss.
+        entries = feed_data.get("entries", [])
+        title = (feed_data.get("feed", {}).get("title") or "").strip()
+        if not entries and not title:
+            raise HTTPException(
+                status_code=400, detail="That URL did not return an RSS or Atom feed"
+            )
+        if feed_data.bozo and not entries:
             raise HTTPException(status_code=400, detail="Invalid or malformed feed")
 
         feed_info = extract_podcast_feed_info(feed_data)
