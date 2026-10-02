@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from sqlalchemy.exc import IntegrityError
 
@@ -29,12 +29,24 @@ from app.db.repository import (
 from app.db.repository.helpers import Article
 from app.lib.dedup.grouping import group_articles
 from app.lib.dedup.similarity import hash_title, is_duplicate
-from app.lib.integrations.rss import fetch_all_feeds_sync
+from app.lib.integrations.rss import FeedResult, fetch_all_feeds_sync
 from app.lib.ranking.promoter import score_and_promote_all
 from app.lib.rss.feeds import seed_all_feeds, DEFAULT_FEEDS
 from app.lib.scheduler.summarizer import background_summarize
 
 logger = logging.getLogger("newsixity")
+
+
+@dataclass(frozen=True)
+class _TitleOnly:
+    """Just enough of an Article for the fuzzy-dedup pool.
+
+    ``is_duplicate`` only reads ``.title``, so newly inserted titles are added
+    to the pool as these rather than re-fetching full Article rows.
+    """
+
+    title: str
+
 
 # Finance feed URL order for priority (top sources first).
 FINANCE_FEED_URL_ORDER = [f["url"] for f in (DEFAULT_FEEDS.get("finance") or [])]
@@ -83,6 +95,14 @@ def _run_feed_refresh_sync(
     new_articles_by_category: dict[str, list[int]] = {}
     existing_articles_by_category: dict[str, list[Article]] = {}
 
+    # Bucket usable feeds by category.
+    #
+    # Feeds were previously drained one at a time to completion, so in a
+    # category with a shared daily budget the first feed to arrive consumed
+    # the entire cap and every other feed was silently skipped for the rest of
+    # the day — world-news showed nothing but Al Jazeera. Visiting feeds
+    # round-robin instead gives each one a turn before any feed gets seconds.
+    feeds_by_category: dict[str, list[FeedResult]] = {}
     for feed_result in feed_results:
         if feed_result.error:
             errors.append(f"Feed {feed_result.feed_url}: {feed_result.error}")
@@ -90,7 +110,6 @@ def _run_feed_refresh_sync(
 
         refreshed += 1
 
-        # Look up the category slug for this feed
         category_slug = get_feed_category_slug(feed_result.feed_id)
         if not category_slug:
             errors.append(
@@ -98,58 +117,99 @@ def _run_feed_refresh_sync(
             )
             continue
 
-        # If a category filter was provided, skip feeds not in that category
         if category_filter and category_slug != category_filter:
             continue
 
-        # Get existing articles in this category for fuzzy dedup.
-        if category_slug not in existing_articles_by_category:
-            existing_articles_by_category[category_slug] = get_articles_by_category(
-                category_slug, limit=200
-            )
+        feeds_by_category.setdefault(category_slug, []).append(feed_result)
 
-        for parsed in feed_result.articles:
-            # Cap all categories at CATEGORY_DAILY_INSERT_CAP new articles per 24h
-            if category_slug not in count_start_by_category:
-                count_start_by_category[category_slug] = (
-                    get_category_articles_count_in_last_24h(category_slug)
-                )
+    for category_slug, category_feeds in feeds_by_category.items():
+        # Existing articles in this category, for fuzzy dedup.
+        existing_articles_by_category[category_slug] = get_articles_by_category(
+            category_slug, limit=200
+        )
 
-            inserted_this_session = (
-                inserted_this_session_by_category.get(category_slug) or 0
-            )
+        # Seed the cap from what's already been stored in the last 24h.
+        count_start_by_category[category_slug] = (
+            get_category_articles_count_in_last_24h(category_slug)
+        )
 
-            if (
-                count_start_by_category[category_slug] + inserted_this_session
-                >= CATEGORY_DAILY_INSERT_CAP
-            ):
-                continue
+        # `category_slug` is bound as a default argument rather than closed over.
+        # It is only ever called within this loop iteration today, so the
+        # closure would work either way — but a bare closure over a loop
+        # variable is the kind of thing that silently reads the *last* value
+        # the moment someone moves a call outside the loop.
+        def _cap_reached(
+            slug: str = category_slug,
+            start: int = count_start_by_category[category_slug],
+        ) -> bool:
+            return start + inserted_this_session_by_category.get(slug, 0) >= CATEGORY_DAILY_INSERT_CAP
 
-            title_hash = hash_title(parsed.title)
+        # Round-robin: each pass offers every feed in the category one
+        # article, then moves to the next pass. A feed with a hundred entries
+        # therefore can't outrank a feed with five.
+        cursors = {i: 0 for i in range(len(category_feeds))}
+        exhausted = False
 
-            # Check for exact title hash duplicate
-            if get_article_by_title_hash(title_hash, category_slug):
-                continue
+        while not exhausted and not _cap_reached():
+            exhausted = True
 
-            # Check for fuzzy duplicate against existing article titles
-            existing_articles = existing_articles_by_category[category_slug]
-            if any(is_duplicate(parsed.title, existing.title) for existing in existing_articles):
-                continue
+            for index, feed_result in enumerate(category_feeds):
+                if _cap_reached():
+                    break
 
-            # Insert the article. A feed the user deleted after this refresh
-            # started fails its FK here — skip that feed, don't abort the run.
-            try:
-                inserted_id = upsert_article(feed_result.feed_id, asdict(parsed), title_hash)
-            except IntegrityError as e:
-                errors.append(f"Feed {feed_result.feed_url}: {e.orig}")
-                break
+                articles = feed_result.articles
+                cursor = cursors[index]
 
-            if inserted_id:
-                new_articles += 1
-                inserted_this_session_by_category[category_slug] = (
-                    inserted_this_session_by_category.get(category_slug, 0) + 1
-                )
-                new_articles_by_category.setdefault(category_slug, []).append(inserted_id)
+                # Take exactly one article this pass; duplicates and
+                # re-entries keep advancing the cursor without spending cap.
+                while cursor < len(articles) and not _cap_reached():
+                    parsed = articles[cursor]
+                    cursor += 1
+
+                    title_hash = hash_title(parsed.title)
+
+                    # Exact title-hash duplicate.
+                    if get_article_by_title_hash(title_hash, category_slug):
+                        continue
+
+                    # Fuzzy duplicate against existing article titles.
+                    existing_articles = existing_articles_by_category[category_slug]
+                    if any(
+                        is_duplicate(parsed.title, existing.title)
+                        for existing in existing_articles
+                    ):
+                        continue
+
+                    # A feed the user deleted after this refresh started fails
+                    # its FK here — skip that feed, don't abort the run.
+                    try:
+                        inserted_id = upsert_article(
+                            feed_result.feed_id, asdict(parsed), title_hash
+                        )
+                    except IntegrityError as e:
+                        errors.append(f"Feed {feed_result.feed_url}: {e.orig}")
+                        break
+
+                    if inserted_id:
+                        new_articles += 1
+                        inserted_this_session_by_category[category_slug] = (
+                            inserted_this_session_by_category.get(category_slug, 0) + 1
+                        )
+                        new_articles_by_category.setdefault(category_slug, []).append(
+                            inserted_id
+                        )
+                        # Newly inserted titles join the fuzzy-dedup pool so two
+                        # feeds carrying the same story don't both land. Only
+                        # .title is read from these, so a light record is enough.
+                        existing_articles.append(
+                            _TitleOnly(title=parsed.title)
+                        )
+
+                    break  # one article per feed per pass
+
+                cursors[index] = cursor
+                if cursor < len(articles):
+                    exhausted = False
 
     # Group new articles by category.
     for slug, article_ids in new_articles_by_category.items():
