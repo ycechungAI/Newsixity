@@ -1,0 +1,35 @@
+---
+description: Project working rules — data safety and fix verification. Read before editing.
+alwaysApply: true
+---
+
+# Project rules (full detail in AGENTS.md at the repo root)
+
+@AGENTS.md
+
+## Data safety — never without asking
+
+Never delete, truncate, drop, move, reset, reseed, or recreate a database.
+Both `data/newsixity.db` (dev) and
+`~/Library/Application Support/Newsixity/newsixity.db` (packaged macOS app)
+hold real user data and cannot be regenerated from the repo.
+
+A "table or column doesn't exist" error is a **migration bug to fix** (see
+`_add_column_if_missing` in `backend/app/db/init_db.py`), never grounds for
+touching the database file.
+
+Point disposable runs at a temp DB instead:
+`NEWSIXITY_DB_PATH=/tmp/scratch.db backend/.venv/bin/python -m pytest`
+
+## Verify fixes
+
+Reproduce with a failing test first, confirm it fails for the right reason,
+fix it, then show the full suite green:
+`cd backend && .venv/bin/python -m pytest -q` and
+`npx tsc --noEmit && npx eslint src && npm run build`.
+
+## Silent failure is the common defect here
+
+Most shipped bugs are swallowed errors rendering empty UI. `apiError.ts` only
+reads `detail`; non-OK responses are often discarded. Surface the real error
+instead of adding a fallback.
