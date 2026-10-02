@@ -1,21 +1,23 @@
 """Mocked-feed RSS ingestion test for app.lib.integrations.rss.
 
-Exercises fetch_feed() against canned RSS/Atom XML with httpx.get mocked out,
-so it never touches the network (safe for CI) while still asserting the exact
-contract the Opus audit's bug fix depends on: fetch_feed must pass a real
-timeout/User-Agent/follow_redirects to httpx (feedparser.parse() itself has no
-timeout kwarg — that was the bug) and correctly parse the response bytes.
+Exercises fetch_feed() against canned RSS/Atom XML served by
+httpx.MockTransport, so it never touches the network (safe for CI), and pins
+the SSRF gate on every redirect hop (v0.4: feed URLs are user-supplied).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 from app.lib.integrations.rss import (
     FEED_FETCH_TIMEOUT_SECONDS,
     FEED_USER_AGENT,
+    MAX_FEED_REDIRECTS,
     ParsedArticle,
+    UnsafeFeedUrlError,
     fetch_feed,
+    probe_feed,
 )
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -42,20 +44,54 @@ SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _mock_response(content: bytes, status_code: int = 200):
-    resp = MagicMock()
-    resp.content = content
-    resp.status_code = status_code
-    resp.raise_for_status = MagicMock()
-    return resp
+@pytest.fixture
+def transport(monkeypatch):
+    """Serve canned responses through httpx.MockTransport — never the network.
+
+    ``routes`` maps URL -> (status, body, headers). DNS is stubbed too: the
+    SSRF gate resolves hostnames, and example.com must not depend on a
+    resolver in CI. Hostnames listed in ``blocked`` resolve "privately".
+    """
+    from app.lib.integrations import rss as rss_module
+
+    state = {"routes": {}, "blocked": set(), "requests": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["requests"].append(request)
+        status, body, headers = state["routes"].get(str(request.url), (404, b"", {}))
+        return httpx.Response(status, content=body, headers=headers)
+
+    def client(timeout=FEED_FETCH_TIMEOUT_SECONDS):
+        return httpx.Client(
+            transport=httpx.MockTransport(handler),
+            timeout=timeout,
+            follow_redirects=False,
+            headers={"User-Agent": FEED_USER_AGENT},
+        )
+
+    monkeypatch.setattr(rss_module, "_feed_client", client)
+    from ipaddress import ip_address
+
+    from app.lib.integrations.content import is_blocked_ip
+
+    def fake_resolves_to_blocked_ip(host):
+        try:
+            ip_address(host)
+        except ValueError:
+            return host in state["blocked"]
+        return is_blocked_ip(host)  # IP literals need no resolver
+
+    monkeypatch.setattr(rss_module, "resolves_to_blocked_ip", fake_resolves_to_blocked_ip)
+    return state
+
+
+FEED_URL = "https://example.com/feed.xml"
 
 
 class TestFetchFeedParsing:
-    def test_parses_articles_from_mocked_feed(self):
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            mock_get.return_value = _mock_response(SAMPLE_RSS.encode())
-
-            articles = fetch_feed("https://example.com/feed.xml")
+    def test_parses_articles_from_mocked_feed(self, transport):
+        transport["routes"][FEED_URL] = (200, SAMPLE_RSS.encode(), {})
+        articles = fetch_feed(FEED_URL)
 
         assert len(articles) == 2
         assert all(isinstance(a, ParsedArticle) for a in articles)
@@ -68,59 +104,78 @@ class TestFetchFeedParsing:
         assert "summary" in first.content
         assert first.image_url == "https://example.com/first.jpg"
 
-    def test_second_article_has_no_image(self):
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            mock_get.return_value = _mock_response(SAMPLE_RSS.encode())
-            articles = fetch_feed("https://example.com/feed.xml")
+    def test_second_article_has_no_image(self, transport):
+        transport["routes"][FEED_URL] = (200, SAMPLE_RSS.encode(), {})
+        assert fetch_feed(FEED_URL)[1].image_url is None
 
-        assert articles[1].image_url is None
-
-    def test_empty_feed_returns_empty_list(self):
+    def test_empty_feed_returns_empty_list(self, transport):
         empty_rss = (
             '<?xml version="1.0"?><rss version="2.0"><channel>'
             "<title>Empty</title></channel></rss>"
         )
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            mock_get.return_value = _mock_response(empty_rss.encode())
-            articles = fetch_feed("https://example.com/empty.xml")
-
-        assert articles == []
+        transport["routes"]["https://example.com/empty.xml"] = (200, empty_rss.encode(), {})
+        assert fetch_feed("https://example.com/empty.xml") == []
 
 
-class TestFetchFeedHttpxContract:
-    """The core regression this test guards: feedparser.parse() has no
-    `timeout` kwarg, so fetch_feed must fetch via httpx.get with an explicit
-    timeout/User-Agent/follow_redirects, then hand feedparser raw bytes."""
+class TestFetchFeedHttpContract:
+    """feedparser.parse() has no `timeout` kwarg, so fetch_feed fetches the
+    bytes itself with an explicit timeout/User-Agent, then hands feedparser
+    raw bytes."""
 
-    def test_calls_httpx_with_timeout_and_user_agent(self):
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            mock_get.return_value = _mock_response(SAMPLE_RSS.encode())
+    def test_sends_user_agent(self, transport):
+        transport["routes"][FEED_URL] = (200, SAMPLE_RSS.encode(), {})
+        fetch_feed(FEED_URL)
+        assert transport["requests"][0].headers["User-Agent"] == FEED_USER_AGENT
 
-            fetch_feed("https://example.com/feed.xml")
+    def test_raises_when_http_error(self, transport):
+        transport["routes"]["https://example.com/broken.xml"] = (500, b"", {})
+        with pytest.raises(httpx.HTTPStatusError):
+            fetch_feed("https://example.com/broken.xml")
 
-            mock_get.assert_called_once()
-            args, kwargs = mock_get.call_args
-            assert args[0] == "https://example.com/feed.xml"
-            assert kwargs["timeout"] == FEED_FETCH_TIMEOUT_SECONDS
-            assert kwargs["follow_redirects"] is True
-            assert kwargs["headers"]["User-Agent"] == FEED_USER_AGENT
+    def test_follows_a_public_redirect(self, transport):
+        transport["routes"][FEED_URL] = (301, b"", {"location": "https://cdn.example.com/f.xml"})
+        transport["routes"]["https://cdn.example.com/f.xml"] = (200, SAMPLE_RSS.encode(), {})
+        assert len(fetch_feed(FEED_URL)) == 2
 
-    def test_raises_when_http_error(self):
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            resp = _mock_response(b"", status_code=500)
-            resp.raise_for_status.side_effect = RuntimeError("500 error")
-            mock_get.return_value = resp
 
-            with pytest.raises(RuntimeError):
-                fetch_feed("https://example.com/broken.xml")
+class TestFeedSsrfGate:
+    """User-added feeds (v0.4) make feed URLs attacker-influenced."""
 
-    def test_never_hits_real_network(self):
-        """Guard against a regression that removes the mock and silently
-        hits example.com for real during CI."""
-        with patch("app.lib.integrations.rss.httpx.get") as mock_get:
-            mock_get.return_value = _mock_response(SAMPLE_RSS.encode())
-            fetch_feed("https://example.com/feed.xml")
-            assert mock_get.call_count == 1
+    def test_rejects_non_http_scheme(self, transport):
+        with pytest.raises(UnsafeFeedUrlError):
+            fetch_feed("file:///etc/passwd")
+        assert transport["requests"] == []
+
+    def test_rejects_host_resolving_privately(self, transport):
+        transport["blocked"].add("intranet.example.com")
+        with pytest.raises(UnsafeFeedUrlError):
+            fetch_feed("https://intranet.example.com/feed")
+        assert transport["requests"] == []
+
+    def test_rejects_redirect_to_private_address(self, transport):
+        transport["routes"][FEED_URL] = (302, b"", {"location": "http://127.0.0.1:8000/api/settings"})
+        with pytest.raises(UnsafeFeedUrlError):
+            fetch_feed(FEED_URL)
+        # The first hop was fetched; the private hop never was.
+        assert [str(r.url) for r in transport["requests"]] == [FEED_URL]
+
+    def test_redirect_loop_is_bounded(self, transport):
+        transport["routes"][FEED_URL] = (302, b"", {"location": FEED_URL})
+        with pytest.raises(ValueError):
+            fetch_feed(FEED_URL)
+        assert len(transport["requests"]) == MAX_FEED_REDIRECTS + 1
+
+
+class TestProbeFeed:
+    def test_accepts_a_feed_and_reports_its_title(self, transport):
+        transport["routes"][FEED_URL] = (200, SAMPLE_RSS.encode(), {})
+        probe = probe_feed(FEED_URL)
+        assert probe.title == "Sample Feed" and probe.entry_count == 2
+
+    def test_rejects_an_html_page(self, transport):
+        transport["routes"][FEED_URL] = (200, b"<html><body>hello</body></html>", {})
+        with pytest.raises(ValueError, match="RSS or Atom"):
+            probe_feed(FEED_URL)
 
 
 class TestFetchAllFeedsSyncErrorHandling:

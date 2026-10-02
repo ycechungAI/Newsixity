@@ -39,6 +39,31 @@ function groupBy<T>(arr: T[], key: (item: T) => string): [string, T[]][] {
   return Array.from(map.entries());
 }
 
+/**
+ * Topic groups from the articles' own groupId, keeping the list's order (a
+ * group sits where its first article would). Built client-side from the
+ * page that was already fetched, so pagination, filters and unread counts
+ * mean the same thing in every view.
+ */
+function topicGroups(articles: Article[]): ArticleGroupType[] {
+  const byKey = new Map<string, Article[]>();
+  for (const a of articles) {
+    const key = a.groupId != null ? `g${a.groupId}` : `a${a.id}`;
+    const members = byKey.get(key);
+    if (members) members.push(a);
+    else byKey.set(key, [a]);
+  }
+  return Array.from(byKey.values()).map((members) => ({
+    id: members[0].groupId ?? -members[0].id,
+    label: null,
+    categoryId: 0,
+    representativeId: members[0].id,
+    articleCount: members.length,
+    representative: members[0],
+    articles: members,
+  }));
+}
+
 function Empty({ message }: { message?: string }) {
   return (
     <div className="empty">
@@ -67,17 +92,20 @@ export default function ArticleList({
     );
   }
 
-  // Topics view — grouped articles
-  if (viewMode === "topics" && groups && groups.length > 0) {
+  const all = flatten(articles, groups);
+  if (all.length === 0) return <Empty message={emptyMessage} />;
+
+  // Topics view — the same story from several sources collapses into one.
+  // No page passed `groups` before, so this view silently rendered a flat
+  // list; it now groups whatever articles it is given.
+  if (viewMode === "topics") {
+    const topics = groups?.length ? groups : topicGroups(all);
     return (
       <div>
-        {groups.map(g => <ArticleGroup key={g.id} group={g} />)}
+        {topics.map(g => <ArticleGroup key={g.id} group={g} autoMarkRead={autoMarkRead} />)}
       </div>
     );
   }
-
-  const all = flatten(articles, groups);
-  if (all.length === 0) return <Empty message={emptyMessage} />;
 
   // Sources view — grouped by feed name (sorted alphabetically)
   if (viewMode === "sources") {
@@ -117,7 +145,7 @@ export default function ArticleList({
     );
   }
 
-  // All other views (list, compact, flat topics fallback) — flat list
+  // All other views (list, compact) — flat list
   return (
     <ul className="article-list">
       {all.map(a => <ArticleCard key={a.id} article={a} autoMarkRead={autoMarkRead} />)}

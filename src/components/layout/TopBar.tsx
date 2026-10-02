@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 import { RefreshButton } from "@/components/ui/RefreshButton";
 
 export default function TopBar() {
@@ -21,6 +21,13 @@ export default function TopBar() {
     if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
   }
 
+  // v0.4 Ask Newsixity: same box, but answered from the article library
+  // instead of a result list.
+  function onAsk() {
+    const q = term.trim();
+    navigate(q ? `/ask?q=${encodeURIComponent(q)}` : "/ask");
+  }
+
   return (
     <div className="topbar">
       <form className="search-form" onSubmit={onSubmit} role="search">
@@ -35,6 +42,7 @@ export default function TopBar() {
           aria-label="Search articles"
         />
         <button className="search-btn" type="submit">Go</button>
+        <button className="search-btn" type="button" onClick={onAsk} title="Ask Newsixity — synthesized answer from your library">Ask</button>
       </form>
       <RefreshButton />
     </div>

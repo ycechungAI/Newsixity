@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import App from "./App";
 import HomePage from "./pages/HomePage";
 import ArticlePage from "./pages/ArticlePage";
@@ -13,6 +13,8 @@ import SettingsPage from "./pages/SettingsPage";
 import ConsolePage from "./pages/ConsolePage";
 import PodcastsPage from "./pages/PodcastsPage";
 import SearchPage from "./pages/SearchPage";
+import AskPage from "./pages/AskPage";
+import BriefingPage from "./pages/BriefingPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 createRoot(document.getElementById("root")!).render(
@@ -29,6 +31,8 @@ createRoot(document.getElementById("root")!).render(
           <Route path="finance/news" element={<FinanceNewsPage />} />
           <Route path="weather" element={<WeatherPage />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="ask" element={<AskPage />} />
+          <Route path="briefing" element={<BriefingPage />} />
           <Route path="saved" element={<SavedPage />} />
           <Route path="podcasts" element={<PodcastsPage />} />
           <Route path="settings" element={<SettingsPage />} />

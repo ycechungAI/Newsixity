@@ -28,6 +28,9 @@ class Article:
     fetched_at: str
     relevance_score: float
     is_promoted: bool
+    # Search only: FTS5 snippet with <mark>…</mark> around matched terms,
+    # already HTML-escaped. None everywhere else.
+    highlight: str | None = None
 
 
 @dataclass

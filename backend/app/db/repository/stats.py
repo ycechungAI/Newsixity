@@ -1,10 +1,12 @@
 """Statistics and seeding queries."""
 
 from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.models import Article as ArticleModel
 from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
+from app.db.repository.feeds import get_deleted_feed_urls
 from app.db.repository.helpers import SPORTS_KEYWORDS
 from app.db.session import SessionLocal
 
@@ -68,7 +70,15 @@ def get_article_count_by_category() -> list[dict]:
 
 
 def seed_feed(category_slug: str, name: str, url: str) -> None:
-    """Seed a feed into a category."""
+    """Seed a default feed into a category, unless its URL is already known.
+
+    Keyed on URL alone — the column's unique constraint. Matching on
+    (category, name, url) meant any default feed that had been renamed,
+    moved to another category, or seeded elsewhere by init_db (Hacker News
+    is in both lists) looked "missing", and the INSERT hit the URL unique
+    constraint and aborted the entire refresh. URLs the user deleted
+    (v0.4 §1) are skipped so they stay deleted.
+    """
     with SessionLocal() as db:
         category = db.execute(
             select(CategoryModel).where(CategoryModel.slug == category_slug)
@@ -77,22 +87,12 @@ def seed_feed(category_slug: str, name: str, url: str) -> None:
         if not category:
             raise ValueError(f'Category "{category_slug}" not found')
 
-        # INSERT OR IGNORE
-        existing = db.execute(
-            select(FeedModel).where(
-                and_(
-                    FeedModel.category_id == category.id,
-                    FeedModel.name == name,
-                    FeedModel.url == url,
-                )
-            )
-        ).scalar_one_or_none()
+        if url in get_deleted_feed_urls(db):
+            return
 
-        if not existing:
-            new_feed = FeedModel(
-                category_id=category.id,
-                name=name,
-                url=url,
-            )
-            db.add(new_feed)
-            db.commit()
+        db.execute(
+            sqlite_insert(FeedModel)
+            .values(category_id=category.id, name=name, url=url)
+            .on_conflict_do_nothing(index_elements=["url"])
+        )
+        db.commit()

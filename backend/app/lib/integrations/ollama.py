@@ -50,6 +50,18 @@ RESEARCH_SYSTEM_PROMPT = """You are a research assistant. Your job is to answer 
 6. If sources conflict, note the disagreement and cite both sides"""
 
 
+# The bullet shape is given as a template, never as an example story: with
+# a concrete example, llama3.2:3b copied it into the briefing verbatim as if
+# it were today's news.
+BRIEFING_SYSTEM_PROMPT = """You write a short daily news briefing from a numbered list of today's articles.
+
+Write between 4 and 8 bullet points — never more than 8. Pick the most significant stories and merge related articles into one bullet. Each bullet has this exact shape:
+
+- **<topic in 2-5 words>:** <one or two full sentences saying what happened> [<article number>]
+
+Rules: use ONLY the provided articles; cite every bullet with the article numbers it uses; no introduction, no conclusion, nothing but the bullets."""
+
+
 class OllamaUnavailableError(Exception):
     pass
 
@@ -199,6 +211,7 @@ async def answer_research_question(
     article_content: str | None,
     sources: list[dict],
     model: str = DEFAULT_RESEARCH_MODEL,
+    conversation: str | None = None,
 ) -> str:
     host = _get_host()
     if not await is_ollama_available(host):
@@ -208,12 +221,20 @@ async def answer_research_question(
         f"[{i + 1}] {s['title']}\nURL: {s['url']}\n{s['snippet']}" for i, s in enumerate(sources)
     )
 
+    # Ask Newsixity calls with no article — omit the block instead of
+    # rendering an empty 'Article: ""' line.
+    context_blocks = []
     if article_content:
-        article_context = f'Article: "{article_title}"\n{article_content[:MAX_RESEARCH_ARTICLE_LENGTH]}'
-    else:
-        article_context = f'Article: "{article_title}"'
+        context_blocks.append(
+            f'Article: "{article_title}"\n{article_content[:MAX_RESEARCH_ARTICLE_LENGTH]}'
+        )
+    elif article_title:
+        context_blocks.append(f'Article: "{article_title}"')
+    if conversation:
+        context_blocks.append(conversation)
+    context_block = "\n\n---\n\n".join(context_blocks)
 
-    user_prompt = f"""{article_context}
+    user_prompt = f"""{context_block}
 
 ---
 
@@ -236,6 +257,44 @@ Question: {question}"""
         )
         return response.message.content or ""
     except Exception as e:
+        if "not found" in str(e).lower():
+            raise OllamaModelNotFoundError(str(e)) from e
         if _is_connection_error(e):
             raise OllamaUnavailableError("Lost connection to Ollama during research") from e
         raise
+
+
+async def generate_briefing_text(articles: list[dict], model: str | None = None) -> str:
+    """Write the daily briefing from [{title, text, category}] (numbered in order).
+
+    Shares the summarizer's single-flight lock: a briefing is a long
+    generation, and running it alongside background summaries would just
+    make both slower on a local GPU.
+    """
+    host = _get_host()
+    if not await is_ollama_available(host):
+        raise OllamaUnavailableError(f"Ollama is not running or not reachable at {host}")
+    if model is None:
+        model = await get_default_model()
+
+    listing = "\n\n".join(
+        f"[{i + 1}] ({a['category']}) {a['title']}\n{a['text'][:400]}" for i, a in enumerate(articles)
+    )
+    async with _summarize_lock:
+        try:
+            response = await _client(host=host).chat(
+                model=model,
+                stream=False,
+                messages=[
+                    {"role": "system", "content": BRIEFING_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Today's articles:\n\n{listing}"},
+                ],
+                options={"temperature": 0.3, "num_predict": 700},
+            )
+            return (response.message.content or "").strip()
+        except Exception as e:
+            if "not found" in str(e).lower():
+                raise OllamaModelNotFoundError(str(e)) from e
+            if _is_connection_error(e):
+                raise OllamaUnavailableError("Lost connection to Ollama during briefing") from e
+            raise

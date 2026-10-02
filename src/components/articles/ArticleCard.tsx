@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { Article } from "@/types";
 import { timeAgo } from "@/lib/utils/date";
 import { truncate, stripHtml } from "@/lib/utils/sanitize";
@@ -9,6 +9,7 @@ import { isVideoUrl } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import { enqueueMarkRead } from "@/lib/articles/markReadQueue";
 import VideoEmbed from "./VideoEmbed";
+import Highlight from "@/components/ui/Highlight";
 import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 interface ArticleCardProps {
@@ -156,7 +157,11 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
         <div className="card-body">
           <Link to={`/article/${article.id}`} className="card-title">{article.title}</Link>
           <div className="card-meta">{meta}</div>
-          {preview && <div className="card-preview">{preview}</div>}
+          {article.highlight ? (
+            <div className="card-preview"><Highlight snippet={article.highlight} /></div>
+          ) : (
+            preview && <div className="card-preview">{preview}</div>
+          )}
           <div className="card-actions">
             <button className={`act-btn${isSaved ? " is-saved" : ""}`} onClick={toggleSave} title={isSaved ? "Unsave" : "Save"}>{isSaved ? "★" : "☆"}</button>
             <button className="act-btn" onClick={toggleRead} title={isRead ? "Mark unread" : "Mark read"}>{isRead ? "○" : "●"}</button>
@@ -188,7 +193,11 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
           {article.title}
         </Link>
         <div className="article-meta">{meta}</div>
-        {preview && <div className="article-preview">{preview}</div>}
+        {article.highlight ? (
+          <div className="article-preview"><Highlight snippet={article.highlight} /></div>
+        ) : (
+          preview && <div className="article-preview">{preview}</div>
+        )}
       </div>
       <div className="article-actions">
         <button className={`act-btn${isSaved ? " is-saved" : ""}`} onClick={toggleSave} title={isSaved ? "Unsave" : "Save"}>

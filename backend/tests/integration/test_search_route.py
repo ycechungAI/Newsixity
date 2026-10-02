@@ -55,3 +55,44 @@ class TestSearchRoute:
         """Adding the search route must not break the id route beside it."""
         resp = client.get("/api/articles/999999999")
         assert resp.status_code in (404, 200)  # not 422 — the path still parses as an int
+
+
+class TestSearchResultShape:
+    """Search returned the repository's snake_case dataclasses inside a plain
+    dict, so ArticleCard read feedName/publishedAt/isSaved as undefined —
+    no source, no date, never "saved". Same silent-mismatch class as v0.3 §6."""
+
+    @pytest.fixture(scope="class")
+    def article_id(self):
+        # Class-scoped: upsert_article is INSERT OR IGNORE, so a second call
+        # with the same guid returns None.
+        from app.db.repository import get_all_feeds, upsert_article
+
+        feed = next(f for f in get_all_feeds() if f.url.startswith("http"))
+        return upsert_article(
+            feed.id,
+            {"guid": "shape-test-1", "title": "Xylophone shape test",
+             "link": "https://example.com/xylophone", "published_at": "2026-05-01T00:00:00Z",
+             "content": "A xylophone appears in this body text."},
+            "shape-hash-1",
+        )
+
+    def test_articles_are_camel_case_with_highlight(self, client, article_id):
+        data = client.get("/api/articles/search", params={"q": "xylophone"}).json()
+        [hit] = [a for a in data["articles"] if a["id"] == article_id]
+        for key in ("feedName", "publishedAt", "isSaved", "categorySlug"):
+            assert key in hit, key
+        assert "feed_name" not in hit
+        assert "<mark>" in hit["highlight"].lower()
+
+    def test_filters_are_accepted(self, client, article_id):
+        params = {"q": "xylophone", "from": "2026-04-01", "to": "2026-05-31", "saved": "false"}
+        ids = [a["id"] for a in client.get("/api/articles/search", params=params).json()["articles"]]
+        assert article_id in ids
+        params["from"] = "2026-06-01"
+        ids = [a["id"] for a in client.get("/api/articles/search", params=params).json()["articles"]]
+        assert article_id not in ids
+
+    def test_bad_date_rejected(self, client):
+        r = client.get("/api/articles/search", params={"q": "x", "from": "yesterday"})
+        assert r.status_code == 422

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Podcast } from "@/types";
 import PodcastsList from "@/components/podcasts/PodcastsList";
 import PodcastPlayer from "@/components/podcasts/PodcastPlayer";
+import { apiErrorMessage } from "@/lib/utils/apiError";
 
 export default function PodcastsPage() {
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
@@ -46,7 +47,7 @@ export default function PodcastsPage() {
 
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || "Failed to subscribe");
+        throw new Error(apiErrorMessage(body, "Failed to subscribe"));
       }
       const newPodcast = await response.json();
       setPodcasts((prev) =>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router";
 import { useTheme } from "@/lib/theme/themeContext";
 import type { Category } from "@/types";
 
@@ -165,7 +165,9 @@ export default function Sidebar({ categories }: SidebarProps) {
 
         <span className="nav-section-label" style={{ marginTop: 8 }}>Library</span>
         <Link to="/saved" className={`nav-link${pathname === "/saved" ? " active" : ""}`}>Saved</Link>
+        <Link to="/briefing" className={`nav-link${pathname === "/briefing" ? " active" : ""}`}>Briefing</Link>
         <Link to="/podcasts" className={`nav-link${pathname === "/podcasts" ? " active" : ""}`}>Podcasts</Link>
+        <Link to="/ask" className={`nav-link${pathname === "/ask" ? " active" : ""}`}>Ask</Link>
       </div>
 
       <div className="sb-footer">

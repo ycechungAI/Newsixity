@@ -55,6 +55,7 @@ class Article(BaseModel):
     fetchedAt: str = Field(validation_alias="fetched_at")
     relevanceScore: float = Field(validation_alias="relevance_score", default=0.0)
     isPromoted: bool = Field(validation_alias="is_promoted", default=False)
+    highlight: Optional[str] = None
 
     model_config = {"populate_by_name": True}
 
@@ -164,6 +165,28 @@ class ResearchRequestBody(BaseModel):
         if v <= 0:
             raise ValueError("Article ID must be positive")
         return v
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed or len(trimmed) > 500:
+            raise ValueError("Question must be 1-500 characters")
+        return trimmed
+
+    model_config = {"populate_by_name": True}
+
+
+class AskHistoryTurn(BaseModel):
+    """One prior Q&A turn, sent back by the frontend for follow-up context."""
+
+    question: str
+    answer: str
+
+
+class AskRequestBody(BaseModel):
+    question: str
+    history: list[AskHistoryTurn] = Field(default_factory=list)
 
     @field_validator("question")
     @classmethod
@@ -287,6 +310,40 @@ class SettingsUpdateRequestBody(BaseModel):
                 raise ValueError("Ollama host must use http:// or https://")
             return trimmed
         return v
+
+
+def _clean_feed_name(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    trimmed = " ".join(v.split())
+    if not trimmed or len(trimmed) > 120:
+        raise ValueError("Feed name must be 1-120 characters")
+    return trimmed
+
+
+_SLUG_PATTERN = r"^[a-z0-9-]{1,40}$"
+
+
+class FeedCreateRequestBody(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    name: Optional[str] = None
+    categorySlug: str = Field(validation_alias="category_slug", pattern=_SLUG_PATTERN)
+
+    _name = field_validator("name")(_clean_feed_name)
+
+    model_config = {"populate_by_name": True}
+
+
+class FeedUpdateRequestBody(BaseModel):
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    categorySlug: Optional[str] = Field(
+        validation_alias="category_slug", default=None, pattern=_SLUG_PATTERN
+    )
+
+    _name = field_validator("name")(_clean_feed_name)
+
+    model_config = {"populate_by_name": True}
 
 
 class FeedWeightUpdateRequestBody(BaseModel):

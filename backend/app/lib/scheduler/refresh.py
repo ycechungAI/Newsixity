@@ -14,6 +14,8 @@ import asyncio
 import logging
 from dataclasses import asdict
 
+from sqlalchemy.exc import IntegrityError
+
 from app.db.repository import (
     get_article_by_id,
     get_article_by_title_hash,
@@ -134,8 +136,13 @@ def _run_feed_refresh_sync(
             if any(is_duplicate(parsed.title, existing.title) for existing in existing_articles):
                 continue
 
-            # Insert the article
-            inserted_id = upsert_article(feed_result.feed_id, asdict(parsed), title_hash)
+            # Insert the article. A feed the user deleted after this refresh
+            # started fails its FK here — skip that feed, don't abort the run.
+            try:
+                inserted_id = upsert_article(feed_result.feed_id, asdict(parsed), title_hash)
+            except IntegrityError as e:
+                errors.append(f"Feed {feed_result.feed_url}: {e.orig}")
+                break
 
             if inserted_id:
                 new_articles += 1

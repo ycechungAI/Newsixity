@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.base import Base
 from app.db.models import Category, Feed, PodcastEpisode
+from app.db.repository.feeds import get_deleted_feed_urls
 from app.db.session import engine, SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -225,6 +226,9 @@ def init_db() -> None:
         _normalize_podcast_episode_dates(session)
 
     with SessionLocal() as session:
+        # Default feeds the user deleted stay deleted (v0.4 §1).
+        deleted_urls = get_deleted_feed_urls(session)
+
         for name, slug, sort_order in DEFAULT_CATEGORIES:
             stmt = (
                 sqlite_insert(Category)
@@ -261,6 +265,8 @@ def init_db() -> None:
                 {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
             ]
             for feed in security_feeds:
+                if feed["url"] in deleted_urls:
+                    continue
                 stmt = (
                     sqlite_insert(Feed)
                     .values(category_id=security_id, **feed)
@@ -279,6 +285,8 @@ def init_db() -> None:
                 {"name": "ESPN Soccer", "url": "https://www.espn.com/espn/rss/soccer/news"},
             ]
             for feed in sports_feeds:
+                if feed["url"] in deleted_urls:
+                    continue
                 stmt = (
                     sqlite_insert(Feed)
                     .values(category_id=sports_id, **feed)
