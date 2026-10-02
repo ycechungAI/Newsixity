@@ -80,9 +80,30 @@ select {
 }
 
 /* ── App layout ────────────────────────────── */
+/*
+ * The shell owns the viewport; the document never scrolls.
+ *
+ * This used to be `min-height: 100vh`, which let the page grow with its
+ * content while the sidebar stayed pinned at exactly 100vh. Result: long
+ * pages scrolled the whole document, the sidebar's bottom edge was left
+ * behind mid-scroll, and both the document and the sidebar's inner
+ * nav-body could each show a scrollbar at once.
+ *
+ * `100dvh` (not `100vh`) so macOS collapses correctly when the user enters
+ * full screen or the title bar auto-hides. `overflow: hidden` is the backstop
+ * that keeps any stray content from escaping the shell.
+ */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 .layout {
   display: flex;
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* ── Sidebar ───────────────────────────────── */
@@ -93,10 +114,18 @@ select {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  /*
+   * Stretched to the shell's height, and no longer its own scroller.
+   *
+   * `height: 100vh` + `overflow-y: auto` made the aside a second vertical
+   * scroll area beside .nav-body, which is what put a scrollbar under the
+   * footer tabs. It also left a duplicate `position` here: `sticky` was
+   * silently overridden by `relative` below, so stickiness never worked.
+   * The shell now owns the height, so the aside just fills it.
+   */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   transition: width 0.12s;
   position: relative; /* for resize handle */
 }
@@ -157,10 +186,12 @@ select {
   color: var(--fg);
 }
 
-/* Nav body */
+/* Nav body — the sidebar's only scroll container. */
 .nav-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 6px 0;
 }
 
@@ -211,10 +242,16 @@ select {
   flex-shrink: 0;
 }
 
-/* Sidebar footer */
+/* Sidebar footer — the Settings/Console/Theme tabs. */
 .sb-footer {
   border-top: 1px solid var(--border);
   padding: 4px 0;
+  /*
+   * Without this, the footer could be squeezed by a tall .nav-body, since
+   * flex items shrink below their content size by default. That compression
+   * is what clipped the tabs and made the area look scrollable.
+   */
+  flex-shrink: 0;
 }
 
 /* Resize handle on the right edge of sidebar */
@@ -234,11 +271,20 @@ select {
 }
 
 /* ── Main area ─────────────────────────────── */
+/*
+ * The single scroll container for page content. `min-height: 0` is the part
+ * that matters: as a flex item, .main defaults to min-height:auto and
+ * refuses to shrink below its content, which pushed the overflow back up to
+ * the document instead of scrolling here.
+ */
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ── Top bar ───────────────────────────────── */
