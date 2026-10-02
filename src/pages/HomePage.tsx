@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router";
 import type { Article, Category } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { confirmDialog, notify } from "@/lib/ui/dialog";
 
 function isSystemMessage(text: string): boolean {

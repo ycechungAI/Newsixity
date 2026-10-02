@@ -6,6 +6,8 @@ Replaces Node's three ``setInterval``/``setTimeout`` loops with a single
   * RSS refresh    — 5s after startup, then every 15 minutes
   * Summarization  — 10s after startup, then every 3 minutes
   * Daily backup   — an immediate startup backup, then 3 AM local time daily
+  * Daily briefing — 7 AM local time (v0.4 §3)
+  * Weather        — hourly observation for each saved city (v0.4 §4)
 
 Every job is registered with ``max_instances=1`` + ``coalesce=True`` so a slow
 run never piles up on the next tick — the run-once-per-tick guarantee Node got
@@ -22,16 +24,22 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.lib.scheduler.backup import create_daily_backup
+from app.lib.scheduler.briefing import scheduled_daily_briefing
 from app.lib.scheduler.podcasts import refresh_all_podcasts
 from app.lib.scheduler.refresh import refresh_all_feeds
 from app.lib.scheduler.summarizer import check_and_summarize
+from app.lib.scheduler.weather import record_weather_for_saved_locations
 
 logger = logging.getLogger("newsixity")
 
 RSS_REFRESH_INTERVAL_MINUTES = 15
 SUMMARIZE_INTERVAL_MINUTES = 3
 PODCAST_REFRESH_INTERVAL_HOURS = 6
+WEATHER_INTERVAL_MINUTES = 60
 BACKUP_HOUR = 3  # 3 AM local time, matching backup/scheduler.ts.
+# Late enough that the overnight refreshes have landed; the page offers a
+# regenerate for anything that arrives later.
+BRIEFING_HOUR = 7
 
 _scheduler: AsyncIOScheduler | None = None
 _started = False
@@ -104,14 +112,38 @@ def start_background_services() -> AsyncIOScheduler | None:
         max_instances=1,
     )
 
+    # Weather history: first run 60s after startup, then hourly.
+    scheduler.add_job(
+        record_weather_for_saved_locations,
+        trigger="interval",
+        minutes=WEATHER_INTERVAL_MINUTES,
+        next_run_time=now + timedelta(seconds=60),
+        id="weather-hourly",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=None,
+    )
+
+    # Daily AI briefing at 7 AM local time. A machine asleep at 7 catches up
+    # on wake (misfire grace) instead of skipping the day.
+    scheduler.add_job(
+        scheduled_daily_briefing,
+        trigger=CronTrigger(hour=BRIEFING_HOUR, minute=0),
+        id="daily-briefing",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
+    )
+
     scheduler.start()
     _scheduler = scheduler
     logger.info(
-        "[Newsixity] Background services started (RSS %dm, summarize %dm, podcasts %dh, backup %02d:00)",
+        "[Newsixity] Background services started (RSS %dm, summarize %dm, podcasts %dh, backup %02d:00, briefing %02d:00)",
         RSS_REFRESH_INTERVAL_MINUTES,
         SUMMARIZE_INTERVAL_MINUTES,
         PODCAST_REFRESH_INTERVAL_HOURS,
         BACKUP_HOUR,
+        BRIEFING_HOUR,
     )
     return scheduler
 

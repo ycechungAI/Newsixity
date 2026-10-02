@@ -6,7 +6,9 @@ FLAGGED FOR SONNET REVIEW:
   * getArticles*: multiple query patterns with optional sports filtering (complex LIKE).
 """
 
+import html
 import re
+from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from sqlalchemy import and_, delete, func, or_, select, text, update
@@ -261,7 +263,21 @@ def _fts5_available(db: Session) -> bool:
     )
 
 
-def _sanitize_fts5_query(query_str: str, prefix: bool = False) -> str:
+# Words that carry no topic in a natural-language question. Only used in
+# match_any mode (Ask Newsixity): with OR semantics, "what" or "the" would
+# otherwise match nearly every article and drown the real terms in bm25.
+_QUESTION_STOPWORDS = frozenset(
+    """a about after an and any are as at be been before but by can could did
+    do does for from had has have how i if in into is it its latest me my new
+    news of on or so tell than that the their them then there these they this
+    to up was we were what when where which who why will with would you your
+    happened happening going""".split()
+)
+
+
+def _sanitize_fts5_query(
+    query_str: str, prefix: bool = False, match_any: bool = False
+) -> str:
     """Turn arbitrary user input into a safe FTS5 MATCH query string.
 
     FTS5's query syntax gives special meaning to characters/keywords a search
@@ -276,6 +292,11 @@ def _sanitize_fts5_query(query_str: str, prefix: bool = False) -> str:
     (e.g. it was only punctuation) — callers should treat that as "no
     matches" rather than passing it to MATCH.
 
+    ``match_any`` ORs the tokens and drops question stopwords — for a
+    natural-language question, where requiring every word ("what",
+    "happened") would match nothing. bm25 still ranks articles that match
+    more of the terms first.
+
     ``prefix`` makes the *final* token a prefix match ("goog" finds
     "google"). FTS5 matches whole tokens, so without this a search box feels
     broken while you are still typing the last word — the old LIKE search
@@ -284,6 +305,9 @@ def _sanitize_fts5_query(query_str: str, prefix: bool = False) -> str:
     finished typing.
     """
     tokens = _FTS5_TOKEN_RE.findall(query_str)
+    if match_any:
+        # Keep the stopwords only if they are all there is ("The Who").
+        tokens = [t for t in tokens if t.lower() not in _QUESTION_STOPWORDS] or tokens
     if not tokens:
         return ""
 
@@ -292,23 +316,67 @@ def _sanitize_fts5_query(query_str: str, prefix: bool = False) -> str:
         # The * must sit outside the quotes to be a prefix operator rather
         # than a literal asterisk inside the phrase.
         quoted[-1] = f'{quoted[-1]}*'
-    return " AND ".join(quoted)
+    return (" OR " if match_any else " AND ").join(quoted)
+
+
+@dataclass(frozen=True)
+class SearchFilters:
+    """Optional narrowing for search_articles(); all fields AND together."""
+
+    category: str | None = None
+    # Inclusive ISO dates (YYYY-MM-DD) on published_at, falling back to
+    # fetched_at for items whose feed gave no date.
+    date_from: str | None = None
+    date_to: str | None = None
+    saved_only: bool = False
+
+
+def _filter_sql(filters: SearchFilters, params: dict) -> str:
+    clauses = []
+    if filters.category:
+        clauses.append("c.slug = :category")
+        params["category"] = filters.category
+    if filters.date_from:
+        clauses.append("date(COALESCE(a.published_at, a.fetched_at)) >= date(:date_from)")
+        params["date_from"] = filters.date_from
+    if filters.date_to:
+        clauses.append("date(COALESCE(a.published_at, a.fetched_at)) <= date(:date_to)")
+        params["date_to"] = filters.date_to
+    if filters.saved_only:
+        clauses.append("a.is_saved = 1")
+    return "".join(f" AND {c}" for c in clauses)
+
+
+# Private-use sentinels for snippet(): they can't occur in stored text, so
+# after HTML-escaping the snippet they are the only thing turned into <mark>.
+_HL_OPEN = "\ue000"
+_HL_CLOSE = "\ue001"
+
+
+def _render_highlight(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    escaped = html.escape(raw, quote=False)
+    return escaped.replace(_HL_OPEN, "<mark>").replace(_HL_CLOSE, "</mark>")
 
 
 def _search_articles_fts5(
     db: Session,
     query_str: str,
-    category: str | None,
+    filters: SearchFilters,
     limit: int,
     prefix: bool = False,
+    match_any: bool = False,
 ) -> list[Article]:
     """FTS5-backed search over title + content + summary, bm25-ranked."""
-    match_query = _sanitize_fts5_query(query_str, prefix=prefix)
+    match_query = _sanitize_fts5_query(query_str, prefix=prefix, match_any=match_any)
     if not match_query:
         return []
 
-    sql = """
-        SELECT a.*, f.name AS feed_name, c.slug AS category_slug
+    # snippet() column -1 = whichever column matched best; 24 tokens of context.
+    sql = f"""
+        SELECT a.*, f.name AS feed_name, c.slug AS category_slug,
+               snippet(articles_fts, -1, '{_HL_OPEN}', '{_HL_CLOSE}', '…', 24) AS fts_snippet
         FROM articles_fts
         JOIN articles a ON a.id = articles_fts.rowid
         JOIN feeds f ON a.feed_id = f.id
@@ -316,21 +384,24 @@ def _search_articles_fts5(
         WHERE articles_fts MATCH :match_query
     """
     params: dict = {"match_query": match_query, "limit": limit}
-    if category:
-        sql += " AND c.slug = :category"
-        params["category"] = category
+    sql += _filter_sql(filters, params)
     # bm25() is more-negative-is-better in SQLite FTS5, so ascending order
     # ranks the best matches first.
     sql += " ORDER BY bm25(articles_fts) LIMIT :limit"
 
     rows = db.execute(text(sql), params).mappings().all()
-    return [map_article_row(dict(row)) for row in rows]
+    results = []
+    for row in rows:
+        article = map_article_row(dict(row))
+        article.highlight = _render_highlight(row["fts_snippet"])
+        results.append(article)
+    return results
 
 
 def _search_articles_like(
     db: Session,
     query_str: str,
-    category: str | None,
+    filters: SearchFilters,
     limit: int,
 ) -> list[Article]:
     """Title-only LIKE scan — the pre-FTS5 behaviour, kept as a fallback for
@@ -346,8 +417,15 @@ def _search_articles_like(
         .where(ArticleModel.title.ilike(f"%{query_str}%"))
     )
 
-    if category:
-        query = query.where(CategoryModel.slug == category)
+    if filters.category:
+        query = query.where(CategoryModel.slug == filters.category)
+    published = func.date(func.coalesce(ArticleModel.published_at, ArticleModel.fetched_at))
+    if filters.date_from:
+        query = query.where(published >= func.date(filters.date_from))
+    if filters.date_to:
+        query = query.where(published <= func.date(filters.date_to))
+    if filters.saved_only:
+        query = query.where(ArticleModel.is_saved == 1)
 
     rows = db.execute(
         query.order_by(ArticleModel.published_at.desc()).limit(limit)
@@ -368,6 +446,9 @@ def search_articles(
     category: str | None = None,
     limit: int = 50,
     prefix: bool = False,
+    *,
+    match_any: bool = False,
+    filters: SearchFilters | None = None,
 ) -> list[Article]:
     """Search articles by title, content, and summary.
 
@@ -377,11 +458,16 @@ def search_articles(
     summary be found, not just the title. Falls back to the previous
     title-only LIKE scan when FTS5 isn't available on this SQLite build.
     """
+    if filters is None:
+        filters = SearchFilters(category=category)
+    elif category:
+        filters = replace(filters, category=category)
     with SessionLocal() as db:
         if _fts5_available(db):
-            return _search_articles_fts5(db, query_str, category, limit, prefix)
-        # The LIKE path already matches substrings, so prefix is a no-op there.
-        return _search_articles_like(db, query_str, category, limit)
+            return _search_articles_fts5(db, query_str, filters, limit, prefix, match_any)
+        # The LIKE path already matches substrings, so prefix is a no-op
+        # there; it has no snippet() either, so results carry no highlight.
+        return _search_articles_like(db, query_str, filters, limit)
 
 
 def upsert_article(

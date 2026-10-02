@@ -83,6 +83,8 @@ async def rate_limit_exception_handler(_request: Request, exc: RateLimitExceeded
 # Wire routers
 from app.routers import (
     articles,
+    ask,
+    briefing,
     categories,
     console,
     feeds,
@@ -92,6 +94,7 @@ from app.routers import (
     podcasts,
     preferences,
     research,
+    search,
     settings as settings_router,
     summarize,
     videos,
@@ -107,6 +110,9 @@ app.include_router(preferences.router, prefix="/api", tags=["preferences"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(ollama.router, prefix="/api", tags=["ollama"])
 app.include_router(research.router, prefix="/api", tags=["research"])
+app.include_router(ask.router, prefix="/api", tags=["ask"])
+app.include_router(search.router, prefix="/api", tags=["search"])
+app.include_router(briefing.router, prefix="/api", tags=["briefing"])
 app.include_router(summarize.router, prefix="/api", tags=["summarize"])
 app.include_router(podcasts.router, prefix="/api", tags=["podcasts"])
 app.include_router(videos.router, prefix="/api", tags=["videos"])

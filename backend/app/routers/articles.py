@@ -18,6 +18,7 @@ from app.db.repository import (
     get_prunable_articles,
     prune_articles,
     search_articles,
+    SearchFilters,
 )
 from app.schemas import (
     Article,
@@ -27,6 +28,8 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+_ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
 
 
 # MUST be declared before /articles/{article_id}: FastAPI matches routes in
@@ -40,14 +43,30 @@ async def search(
     q: str = Query(..., min_length=1, max_length=200),
     category: Optional[str] = Query(None, max_length=80),
     limit: int = Query(50, ge=1, le=200),
+    date_from: Optional[str] = Query(None, alias="from", pattern=_ISO_DATE),
+    date_to: Optional[str] = Query(None, alias="to", pattern=_ISO_DATE),
+    saved: bool = Query(False),
 ) -> dict:
     """Full-text search over article titles, bodies, and summaries.
 
     Backed by FTS5 with bm25 relevance ranking where available, falling back
-    to a title-only LIKE scan otherwise (see repository.articles).
+    to a title-only LIKE scan otherwise (see repository.articles). Each hit
+    carries a ``highlight`` snippet with ``<mark>`` around matched terms.
     """
-    results = search_articles(q, category, limit, prefix=True)
-    return {"query": q, "count": len(results), "articles": results}
+    results = search_articles(
+        q,
+        limit=limit,
+        prefix=True,
+        filters=SearchFilters(
+            category=category, date_from=date_from, date_to=date_to, saved_only=saved
+        ),
+    )
+    # Validate into the camelCase schema: the repository returns snake_case
+    # dataclasses, and returning those inside a plain dict serialised them
+    # as-is — so ArticleCard read feedName/publishedAt/isSaved as undefined
+    # and every search result showed no source, no date, and "unsaved".
+    articles = [Article.model_validate(r, from_attributes=True) for r in results]
+    return {"query": q, "count": len(articles), "articles": articles}
 
 
 @router.get(

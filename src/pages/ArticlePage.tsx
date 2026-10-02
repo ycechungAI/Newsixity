@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import type { Article } from "@/types";
 import { formatDate } from "@/lib/utils/date";
 import { isVideoUrl, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem } from "@/lib/utils/video";

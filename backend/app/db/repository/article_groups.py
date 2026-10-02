@@ -91,6 +91,7 @@ def get_recent_groups_by_category(
                 ArticleGroupModel.label,
                 ArticleGroupModel.category_id,
                 ArticleModel.title.label("representative_title"),
+                ArticleModel.content.label("representative_content"),
             )
             .join(CategoryModel, ArticleGroupModel.category_id == CategoryModel.id)
             .outerjoin(ArticleModel, ArticleGroupModel.representative_id == ArticleModel.id)
@@ -108,6 +109,7 @@ def get_recent_groups_by_category(
                 "id": r.id,
                 "label": r.label,
                 "representative_title": r.representative_title,
+                "representative_content": r.representative_content,
                 "category_id": r.category_id,
             }
             for r in rows

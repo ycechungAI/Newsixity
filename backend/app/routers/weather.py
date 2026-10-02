@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.repository import (
     add_weather_location,
-    add_weather_observation,
     delete_weather_location,
     get_weather_daily,
     get_weather_observations,
@@ -32,6 +31,7 @@ from app.lib.integrations.weather import (
     fetch_forecast,
     search_cities,
 )
+from app.lib.scheduler.weather import record_forecast
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 
 logger = logging.getLogger("newsixity")
@@ -81,20 +81,7 @@ def _record_observation(latitude: float, longitude: float, data: dict) -> None:
     location = _find_location(latitude, longitude)
     if not location:
         return  # Only track history for cities the user actually saved.
-
-    current = data.get("current") or {}
-    add_weather_observation(
-        location_id=location.id,
-        temperature=current.get("temperature_2m"),
-        apparent_temperature=current.get("apparent_temperature"),
-        humidity=current.get("relative_humidity_2m"),
-        wind_speed=current.get("wind_speed_10m"),
-        weather_code=current.get("weather_code"),
-    )
-
-    rows = daily_rows_from_response(data)
-    if rows:
-        upsert_weather_daily(location.id, rows)
+    record_forecast(location.id, data)
 
 
 def _find_location(latitude: float, longitude: float):

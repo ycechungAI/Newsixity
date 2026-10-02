@@ -378,3 +378,68 @@ class TestSanitizerPrefixForm:
 
     def test_no_prefix_by_default(self):
         assert _sanitize_fts5_query("google news") == '"google" AND "news"'
+
+
+class TestQuestionMode:
+    """match_any (Ask Newsixity): a natural question must still find articles."""
+
+    def test_sanitizer_ors_and_drops_stopwords(self):
+        assert _sanitize_fts5_query("What happened with the Fed?", match_any=True) == '"Fed"'
+
+    def test_all_stopwords_kept_rather_than_emptied(self):
+        assert _sanitize_fts5_query("the who", match_any=True) == '"the" OR "who"'
+
+    def test_question_finds_article_that_and_mode_misses(self, fts5_db):
+        _seed_article(fts5_db, category_slug="finance", title="Federal Reserve holds rates",
+                      content="The central bank kept interest rates unchanged.")
+        question = "what happened with interest rates?"
+        assert search_articles(question) == []  # AND: "what"/"happened" absent
+        assert [a.title for a in search_articles(question, match_any=True)] == [
+            "Federal Reserve holds rates"
+        ]
+
+
+class TestFiltersAndHighlight:
+    @pytest.fixture
+    def seeded(self, fts5_db):
+        old = _seed_article(fts5_db, category_slug="tech", title="Quantum chip old", content="quantum")
+        new = _seed_article(fts5_db, category_slug="tech", title="Quantum chip new", content="quantum")
+        other = _seed_article(fts5_db, category_slug="world", title="Quantum diplomacy", content="quantum")
+        with fts5_db() as s:
+            s.query(Article).filter_by(id=old).update({"published_at": "2026-01-05T10:00:00Z"})
+            s.query(Article).filter_by(id=new).update(
+                {"published_at": "2026-03-05T10:00:00Z", "is_saved": 1})
+            s.query(Article).filter_by(id=other).update({"published_at": "2026-03-01T10:00:00Z"})
+            s.commit()
+        return fts5_db
+
+    def _titles(self, **filters):
+        from app.db.repository.articles import SearchFilters
+
+        return sorted(a.title for a in search_articles("quantum", filters=SearchFilters(**filters)))
+
+    def test_category(self, seeded):
+        assert self._titles(category="world") == ["Quantum diplomacy"]
+
+    def test_date_range_is_inclusive(self, seeded):
+        assert self._titles(date_from="2026-03-01", date_to="2026-03-05") == [
+            "Quantum chip new", "Quantum diplomacy"]
+        assert self._titles(date_to="2026-01-05") == ["Quantum chip old"]
+
+    def test_saved_only(self, seeded):
+        assert self._titles(saved_only=True) == ["Quantum chip new"]
+
+    def test_filters_combine(self, seeded):
+        assert self._titles(category="tech", date_from="2026-02-01") == ["Quantum chip new"]
+
+    def test_highlight_marks_terms_and_escapes_html(self, fts5_db):
+        _seed_article(fts5_db, category_slug="tech", title="Plain title",
+                      content="before <script>alert(1)</script> the zeppelin landed")
+        [hit] = search_articles("zeppelin")
+        assert "<mark>zeppelin</mark>" in hit.highlight
+        assert "<script>" not in hit.highlight and "&lt;script&gt;" in hit.highlight
+
+    def test_like_fallback_honours_filters(self, like_only_db):
+        _seed_article(like_only_db, category_slug="tech", title="Quantum a", content="")
+        _seed_article(like_only_db, category_slug="world", title="Quantum b", content="")
+        assert self._titles(category="tech") == ["Quantum a"]
