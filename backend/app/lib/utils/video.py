@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from app.db.repository.videos import get_cached_playlist, save_cached_playlist
 from app.lib.integrations.content import resolves_to_blocked_ip
 from app.lib.utils.url import parse_http_url
 
@@ -203,9 +204,10 @@ PLAYLIST_MAX_ITEMS = 1000
 PLAYLIST_TIME_BUDGET_SECONDS = 60
 PLAYLIST_CACHE_TTL_SECONDS = 6 * 60 * 60
 
-# playlist_id -> (expires_at_monotonic, payload). Scraping pulls ~2 MB per
-# round, and playlists change rarely; an in-process cache is enough for a
-# single-user app (a restart just refetches).
+# playlist_id -> (expires_at_monotonic, payload). Hot cache for the current
+# process; `youtube_playlist_cache` (app/db/repository/videos.py) is the durable
+# layer that survives a restart. Scraping pulls ~2 MB per round and playlists
+# change rarely, so both layers matter.
 _playlist_cache: dict[str, tuple[float, dict]] = {}
 
 
@@ -399,15 +401,26 @@ def fetch_youtube_playlist(playlist_id: str, force_refresh: bool = False) -> dic
     if not PLAYLIST_ID_RE.match(playlist_id or ""):
         return {"items": [], "totalItems": 0, "source": "none"}
 
-    # force_refresh exists because the cache is keyed only by playlist id and
-    # lives in this process: once a playlist is cached, edits made on YouTube
-    # (adding or removing a video) stay invisible for the whole TTL. Deleting
-    # and re-adding the article does not help — that only changes a database
-    # row, while the fetch still hits the same cache key. The user needs a way
-    # to say "go look again".
+    # Two cache layers. The in-process dict is the hot path (no DB round trip
+    # for repeated requests in one session); the `youtube_playlist_cache` table
+    # is what makes a playlist survive a restart. It used to be the dict alone,
+    # so every launch began cold — and a slow first fetch is exactly what leaves
+    # the frontend's `/embed/videoseries?list=...` placeholder ("Video
+    # unavailable") on screen, because that URL form has no video in it until a
+    # real video id arrives.
     cached = _playlist_cache.get(playlist_id)
     if cached and cached[0] > time.monotonic() and not force_refresh:
         return cached[1]
+
+    if not force_refresh:
+        stored = get_cached_playlist(playlist_id)
+        if stored is not None:
+            payload = stored["payload"]
+            _playlist_cache[playlist_id] = (
+                time.monotonic() + PLAYLIST_CACHE_TTL_SECONDS,
+                payload,
+            )
+            return payload
 
     items: list[PlaylistItem] = []
     seen: set[str] = set()
@@ -490,4 +503,10 @@ def fetch_youtube_playlist(playlist_id: str, force_refresh: bool = False) -> dic
         time.monotonic() + PLAYLIST_CACHE_TTL_SECONDS,
         result,
     )
+    # Persist so the next launch is warm. A write failure must not fail the
+    # fetch — the result is already good and the in-memory copy still serves.
+    try:
+        save_cached_playlist(playlist_id, result, PLAYLIST_CACHE_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Playlist %s: could not persist cache: %s", playlist_id, exc)
     return result

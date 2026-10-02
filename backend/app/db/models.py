@@ -337,6 +337,41 @@ class WeatherLocation(Base):
     )
 
 
+class YoutubePlaylistCache(Base):
+    """Scrape cache for YouTube playlists, keyed by playlist id.
+
+    Was an in-process dict, which meant every app restart began cold. A cold
+    cache is what made the "Video unavailable" flash visible: a playlist-only
+    URL mounts ``/embed/videoseries?list=...`` — a form with no video in it —
+    until the playlist resolves and the frontend swaps in a real video id, so
+    the longer the fetch takes, the longer the broken frame is on screen.
+
+    A *new* table, so ``create_all`` builds it on an existing database with no
+    ALTER and no migration — create_all only fails to change a table that
+    already exists.
+
+    ``payload`` is the full JSON response the API returns (items, totalItems,
+    source). ``source`` is duplicated as a column so a degraded RSS scrape is
+    visible without parsing the JSON back out.
+    """
+
+    __tablename__ = "youtube_playlist_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    playlist_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'scrape'"))
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # ISO-8601 UTC, same format as the rest of the schema.
+    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
+
+    __table_args__ = (
+        Index("idx_youtube_playlist_cache_expires", "expires_at"),
+        {"sqlite_autoincrement": True},
+    )
+
+
 class WeatherObservation(Base):
     """Point-in-time current-conditions snapshot for a location."""
 

@@ -152,6 +152,12 @@ from app.db.repository.preferences import (
     delete_preference_keyword,
     clear_auto_preferences,
 )
+from app.db.repository.videos import (
+    delete_cached_playlist,
+    get_cached_playlist,
+    purge_expired_playlists,
+    save_cached_playlist,
+)
 from app.db.repository.weather import (
     list_weather_locations,
     add_weather_location,
@@ -306,6 +312,10 @@ __all__ = [
     "delete_weather_location",
     "get_active_weather_location",
     "set_active_weather_location",
+    "delete_cached_playlist",
+    "get_cached_playlist",
+    "purge_expired_playlists",
+    "save_cached_playlist",
     "add_weather_observation",
     "get_weather_observations",
     "delete_old_weather_observations",
