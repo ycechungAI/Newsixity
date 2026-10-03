@@ -186,5 +186,6 @@ aware, follow-ups retrieve with the previous question's terms.
 
 ## Known Issues & Technical Debt
 - [ ] ThemeProvider React Fast Refresh warning (low priority)
-- [ ] GitHub Actions security vulnerability (Dependabot flagged)
+- [ ] GitHub Actions security vulnerability (Dependabot flagged) — subsumed by the glib note below
 - [ ] Backend code organization: consolidate feed fetching logic
+- [ ] Dependabot finding in `glib 0.18.5`. The crate only enters the Cargo.lock because `webkit2gtk` is declared under `cfg(target_os = "linux")`; it is never compiled on the macOS build. Upstream fix requires `webkit2gtk` >= 0.20 (glib 0.20) — track on `webkit2gtk` release; no action possible until Tauri bumps its GTK stack.
