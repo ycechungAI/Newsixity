@@ -29,16 +29,61 @@ export function isShareLink(url: string): boolean {
   }
 }
 
+export interface ResolvedShareLink {
+  /** "media" plays natively, "page" goes in the mini browser, "refused" does neither. */
+  kind: 'media' | 'page' | 'refused';
+  playable: boolean;
+  /** The URL to load — for a page, the post-redirect one (PCloud 302s hosts). */
+  url: string | null;
+  contentType: string | null;
+  /**
+   * Whether the publisher permits being framed. `null` when it doesn't apply.
+   * A refused frame renders as a blank box with no error anywhere, so this is
+   * asked *before* the iframe is mounted rather than discovered afterwards.
+   */
+  framable: boolean | null;
+  reason: string | null;
+}
+
 /**
- * The URL to hand a `<video src>`.
+ * Ask the backend what a share link actually is.
  *
- * Share links go through the backend, which follows the redirects and answers
- * 307 — the final file is usually on another host with no CORS headers, so the
- * browser cannot follow the hop itself. Everything else is used as-is.
+ * Server-side because the answer is a redirect chain plus response headers,
+ * neither of which the browser can read: the final host sends no CORS headers,
+ * and `X-Frame-Options` / `frame-ancestors` are only visible to a server.
  */
-export function playableSrc(url: string): string {
-  if (!isShareLink(url)) return url;
-  return `/api/videos/direct?url=${encodeURIComponent(url)}`;
+export async function resolveShareLink(
+  url: string,
+  signal?: AbortSignal
+): Promise<ResolvedShareLink> {
+  const empty: ResolvedShareLink = {
+    kind: 'refused',
+    playable: false,
+    url: null,
+    contentType: null,
+    framable: null,
+    reason: 'Could not check that link.',
+  };
+  try {
+    const res = await fetch(`/api/videos/resolve?url=${encodeURIComponent(url)}`, {
+      signal: signal ?? AbortSignal.timeout(15000),
+    });
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data.kind !== 'string') return empty;
+    return data as ResolvedShareLink;
+  } catch {
+    return empty;
+  }
+}
+
+/** True for a publisher share link, which is a page rather than a media file.
+ *
+ * These render in `ShareLinkView`, not `VideoEmbed`: a share link usually
+ * points at a *folder*, and asking a `<video>` element to play a folder is how
+ * you get a dead player with no error.
+ */
+export function isShareVideo(url: string): boolean {
+  return extractVideoInfo(url)?.viaServer === true;
 }
 
 /**

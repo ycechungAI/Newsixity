@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import type { Article } from "@/types";
 import { formatDate } from "@/lib/utils/date";
-import { isVideoUrl, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem } from "@/lib/utils/video";
+import { isVideoUrl, isShareVideo, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import ArticleSummary from "@/components/articles/ArticleSummary";
 import ArticleFullText from "@/components/articles/ArticleFullText";
 import VideoEmbed from "@/components/articles/VideoEmbed";
 import WebPageEmbed from "@/components/articles/WebPageEmbed";
+import ShareLinkView from "@/components/articles/ShareLinkView";
 
 export default function ArticlePage() {
   const { id: idParam } = useParams<{ id: string }>();
@@ -102,8 +103,15 @@ export default function ArticlePage() {
     .filter(Boolean)
     .join(" · ");
   const isManualVideo = article.feedName === "Manual Links" && isVideoUrl(safeArticleLink);
+  // A share link is a page, not a media file — PCloud folders are the common
+  // case — so it gets the mini browser instead of a <video> that would sit
+  // there dead. Checked before isManualVideo so it wins over the player.
+  const isShareLinkVideo =
+    article.feedName === "Manual Links" && isShareVideo(safeArticleLink);
   const isManualWebPage =
-    article.feedName === "Manual Links" && !isManualVideo && parseHttpUrl(article.link) !== null;
+    article.feedName === "Manual Links" &&
+    !isManualVideo &&
+    parseHttpUrl(article.link) !== null;
 
   return (
     <div className="article-page page">
@@ -113,7 +121,10 @@ export default function ArticlePage() {
         <div className="article-detail-meta">{meta}</div>
         <h1 className="article-detail-title">{article.title}</h1>
 
-        {isManualVideo && (
+        {isShareLinkVideo && (
+          <ShareLinkView url={safeArticleLink} title={article.title} />
+        )}
+        {!isShareLinkVideo && isManualVideo && (
           <VideoEmbed
             url={safeArticleLink}
             title={article.title}

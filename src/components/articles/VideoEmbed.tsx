@@ -7,7 +7,6 @@ import {
   isLinux,
   isMacOS,
   isWindows,
-  playableSrc,
   youtubePlayableUrl,
   type PlaylistItem,
 } from "@/lib/utils/video";
@@ -59,12 +58,7 @@ export default function VideoEmbed({
     // Windows/macOS the iframe embed is the original, working path — leave it.
     isLinux && videoInfo?.type === "youtube" && !!videoInfo?.videoId
       ? youtubePlayableUrl(videoInfo.videoId, videoInfo?.playlistId)
-      : videoInfo?.viaServer
-        // A publisher share link (PCloud) is a page that redirects to the
-        // file. The browser can't follow that hop — the final host sends no
-        // CORS headers — so the backend resolves it and answers 307.
-        ? playableSrc(videoInfo.embedUrl)
-        : (videoInfo?.embedUrl ?? "")
+      : (videoInfo?.embedUrl ?? "")
   );
   const [currentTitle, setCurrentTitle] = useState(title ?? "");
   const [activeVideoId, setActiveVideoId] = useState(videoInfo?.videoId ?? "");

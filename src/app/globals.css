@@ -3168,6 +3168,82 @@ body,
 }
 .refresh-report.is-error { color: var(--danger); }
 
+/* ── Publisher share links (PCloud folders) ──
+   A share link is a page, not a media file, so it never reaches <video>.
+   Three states, because the backend reports three: a file (played natively),
+   a framable listing (the mini browser), or neither (say so and link out). */
+.share-view {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.share-view.is-loading {
+  padding: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  align-items: center;
+}
+.share-view.is-blocked {
+  padding: 14px;
+  gap: 8px;
+}
+.share-view-msg {
+  font-size: 11px;
+  color: var(--fg);
+}
+/* A folder listing needs more height than a 16:9 player: the point is to see
+   several files at once and choose one. */
+.share-view-frame {
+  display: block;
+  width: 100%;
+  height: 420px;
+  border: 0;
+  background: var(--bg);
+}
+.share-view-media {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+}
+.share-view-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.share-view-url {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.share-view-hint {
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--subtle);
+  border-top: 1px solid var(--border);
+}
+.share-view-actions { display: flex; gap: 6px; align-items: center; }
+.share-open-btn {
+  font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.share-open-btn:hover { border-color: var(--accent); }
+
 /* ── Search ────────────────────────────────── */
 .search-filters {
   display: flex;

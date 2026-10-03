@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -65,6 +66,51 @@ class ResolvedMedia:
     content_type: str
 
 
+@dataclass(frozen=True)
+class ResolvedLink:
+    """What a share link actually is, for the UI to act on.
+
+    Three outcomes, because the UI needs a different thing for each:
+
+    * ``media`` — a file. Play it natively; nothing else can beat that.
+    * ``page`` — a web page (PCloud's folder listing, typically). Show it in a
+      mini browser so the user can browse and click, *if* the publisher allows
+      being framed. ``framable`` is None when it doesn't apply.
+    * ``refused`` — not ours to open, or not media. ``reason`` is user-facing.
+
+    ``framable`` exists because a cross-origin frame that is refused renders as
+    a blank rectangle with no error anywhere. Asking first is the difference
+    between "here is your folder" and "here is an empty box".
+    """
+
+    kind: Literal["media", "page", "refused"]
+    url: str | None = None
+    content_type: str | None = None
+    framable: bool | None = None
+    reason: str | None = None
+
+
+def _is_frameable(headers) -> bool:
+    """Whether a cross-origin <iframe> would be allowed to show this page.
+
+    Conservative by design: anything that *could* forbid framing counts as
+    forbidding it, because the failure is invisible and the user is left
+    looking at an empty box. ALLOW-FROM is deliberately not honoured — it is
+    ignored by every current browser, so treating it as permission would
+    reintroduce exactly the blank-frame case.
+    """
+    if headers.get("x-frame-options"):
+        return False
+    csp = headers.get("content-security-policy", "") or ""
+    for directive in csp.split(";"):
+        directive = directive.strip().lower()
+        if directive.startswith("frame-ancestors"):
+            # "frame-ancestors *" is the only form that permits us; 'self',
+            # 'none', a host list, and 'none' all exclude a 127.0.0.1 origin.
+            return directive in {"frame-ancestors *", "frame-ancestors *;"}
+    return True
+
+
 def is_known_share_host(url: str) -> bool:
     """Whether this URL is a share link we can resolve.
 
@@ -96,13 +142,15 @@ def _check_url(url: str) -> str:
     return safe
 
 
-def resolve_share_link(url: str) -> ResolvedMedia:
-    """Follow a share link to the media file behind it.
+def classify_share_link(url: str) -> ResolvedLink:
+    """Work out what a share link is: a file, a viewable page, or neither.
 
-    Raises ShareLinkError with a user-facing reason when the link does not
-    resolve to video — which is a normal outcome, not an error: plenty of
-    share links are folders, images, or multi-file shares that no <video>
-    element can play.
+    The friendly counterpart to :func:`resolve_share_link`, which raises. The
+    UI needs all three outcomes — including "here is a page you can browse" —
+    so a folder share becomes a folder browser rather than a dead player.
+
+    The final URL is what should be loaded, not the one that was passed in:
+    PCloud 302s ``my.pcloud.com`` to ``u.pcloud.link`` before answering.
     """
     current = _check_url(url)
 
@@ -130,13 +178,17 @@ def resolve_share_link(url: str) -> ResolvedMedia:
                 if response.is_redirect:
                     location = response.headers.get("location", "")
                     if not location:
-                        raise ShareLinkError("That link redirects nowhere useful")
+                        return ResolvedLink(
+                            kind="refused",
+                            reason="That link redirects nowhere useful",
+                        )
                     current = _check_url(urljoin(current, location))
                     continue
 
                 if response.status_code >= 400:
-                    raise ShareLinkError(
-                        f"That link returned HTTP {response.status_code}"
+                    return ResolvedLink(
+                        kind="refused",
+                        reason=f"That link returned HTTP {response.status_code}",
                     )
 
                 content_type = (
@@ -144,17 +196,40 @@ def resolve_share_link(url: str) -> ResolvedMedia:
                 ).split(";")[0].strip().lower()
 
                 if content_type.startswith(_VIDEO_CONTENT_PREFIXES):
-                    return ResolvedMedia(url=current, content_type=content_type)
-
-                if not content_type or content_type.startswith(
-                    ("text/html", "application/xhtml")
-                ):
-                    raise ShareLinkError(
-                        "That link is a web page, not a playable video file"
+                    return ResolvedLink(
+                        kind="media",
+                        url=current,
+                        content_type=content_type,
                     )
 
-                raise ShareLinkError(
-                    f"That link is not a video (it serves {content_type})"
+                if content_type.startswith(("text/html", "application/xhtml")) or not content_type:
+                    # A folder listing. Whether it may be framed decides
+                    # between "browse it here" and "open it in your browser".
+                    return ResolvedLink(
+                        kind="page",
+                        url=current,
+                        content_type=content_type or "text/html",
+                        framable=_is_frameable(response.headers),
+                        reason=None,
+                    )
+
+                return ResolvedLink(
+                    kind="refused",
+                    reason=f"That link is not a video (it serves {content_type})",
                 )
 
-    raise ShareLinkError("That link redirects too many times")
+    return ResolvedLink(kind="refused", reason="That link redirects too many times")
+
+
+def resolve_share_link(url: str) -> ResolvedMedia:
+    """Follow a share link to the media file behind it.
+
+    Raises ShareLinkError with a user-facing reason when the link does not
+    resolve to video. Callers that need to offer a browser instead should use
+    :func:`classify_share_link`, which distinguishes "not a video" from "a page
+    you can look at".
+    """
+    result = classify_share_link(url)
+    if result.kind == "media" and result.url and result.content_type:
+        return ResolvedMedia(url=result.url, content_type=result.content_type)
+    raise ShareLinkError(result.reason or "That link is not a playable video")

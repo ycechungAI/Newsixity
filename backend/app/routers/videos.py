@@ -20,7 +20,7 @@ from app.lib.utils.stream import (
     resolve_stream,
     stream_cache_info,
 )
-from app.lib.utils.media_resolve import ShareLinkError, resolve_share_link
+from app.lib.utils.media_resolve import ShareLinkError, classify_share_link
 from app.lib.utils.video import PLAYLIST_ID_RE, fetch_youtube_playlist
 
 router = APIRouter()
@@ -85,28 +85,43 @@ def get_youtube_stream(
 
 
 @router.get(
-    "/videos/direct",
-    dependencies=[Depends(rate_limit("videos-direct", 60, TEN_MIN_MS))],
+    "/videos/resolve",
+    dependencies=[Depends(rate_limit("videos-resolve", 60, TEN_MIN_MS))],
 )
-def get_direct_media(url: str = Query(..., description="A publisher share link")):
-    """Resolve a share link and redirect to the media file behind it.
+def resolve_media(url: str = Query(..., description="A publisher share link")) -> dict:
+    """Work out whether a share link can play, and say why not when it can't.
 
     PCloud (and similar publishers) hand out a *page* URL with no file
-    extension, so the frontend's extension check cannot tell it is video and
-    never mounts a player. This walks the redirects server-side — re-checking
-    the SSRF gate on every hop — and answers 307 so the browser follows
-    straight to the file. Nothing is buffered: only headers are read.
+    extension, so the frontend's extension check cannot tell it is video. This
+    walks the redirects server-side — re-checking the SSRF gate on every hop —
+    and reports the result as JSON.
 
-    Mirrors the YouTube stream path deliberately. The final URL is normally on
-    a different host with no CORS headers, which is why the browser cannot do
-    this hop itself.
+    JSON rather than a 307 on purpose. A 307 inside `<video src>` fails
+    *silently*: the element shows a dead player with nothing in any log, which
+    is the same failure mode this endpoint exists to end. Returning
+    ``{"playable": false, "reason": …}`` lets the UI offer a real alternative —
+    for a folder share, opening the link in the user's browser.
+
+    Nothing is buffered: only response headers are read.
     """
     try:
-        media = resolve_share_link(url)
+        result = classify_share_link(url)
     except ShareLinkError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # Not ours to open (private address, non-http scheme). Still a 200:
+        # the UI shows the reason rather than a server error.
+        return {"kind": "refused", "playable": False, "reason": str(exc), "url": None}
 
-    return RedirectResponse(media.url, status_code=307)
+    return {
+        "kind": result.kind,
+        "playable": result.kind == "media",
+        # For a page, the URL to load in the mini browser — and `framable`
+        # says whether the publisher permits that at all. Without it the
+        # frame renders blank with no error, which is worse than not trying.
+        "url": result.url,
+        "contentType": result.content_type,
+        "framable": result.framable,
+        "reason": result.reason,
+    }
 
 
 @router.get("/videos/stream-info", include_in_schema=False)

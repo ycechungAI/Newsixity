@@ -5,10 +5,11 @@ import { Link } from "react-router";
 import type { Article } from "@/types";
 import { timeAgo } from "@/lib/utils/date";
 import { truncate, stripHtml } from "@/lib/utils/sanitize";
-import { isVideoUrl } from "@/lib/utils/video";
+import { isShareVideo, isVideoUrl } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import { enqueueMarkRead } from "@/lib/articles/markReadQueue";
 import VideoEmbed from "./VideoEmbed";
+import ShareLinkView from "./ShareLinkView";
 import ScoreExplainer from "./ScoreExplainer";
 import Highlight from "@/components/ui/Highlight";
 import { confirmDialog, notify } from "@/lib/ui/dialog";
@@ -142,9 +143,15 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
     const meta = [article.feedName, timeAgo(article.publishedAt)].filter(Boolean).join(" · ");
     const safeOriginalUrl = parseHttpUrl(article.link)?.toString() ?? article.link;
     const isVideo = isVideoUrl(safeOriginalUrl);
+    // A share link (PCloud folder) is a page, not a file. VideoEmbed would
+    // mount a <video> pointed at a folder — a dead player, no error — so it
+    // gets the share view instead.
+    const isShare = isShareVideo(safeOriginalUrl);
     return (
       <div ref={(node) => { cardRef.current = node; }} className={`article-card${isRead ? " is-read" : ""}`}>
-        {isVideo ? (
+        {isShare ? (
+          <ShareLinkView url={safeOriginalUrl} title={article.title} />
+        ) : isVideo ? (
           <VideoEmbed url={safeOriginalUrl} title={article.title} />
         ) : article.imageUrl ? (
           <img
