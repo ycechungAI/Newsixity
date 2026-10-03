@@ -20,6 +20,7 @@ from app.lib.utils.stream import (
     resolve_stream,
     stream_cache_info,
 )
+from app.lib.utils.media_resolve import ShareLinkError, resolve_share_link
 from app.lib.utils.video import PLAYLIST_ID_RE, fetch_youtube_playlist
 
 router = APIRouter()
@@ -81,6 +82,31 @@ def get_youtube_stream(
         media_type="video/mp4",
         headers=headers,
     )
+
+
+@router.get(
+    "/videos/direct",
+    dependencies=[Depends(rate_limit("videos-direct", 60, TEN_MIN_MS))],
+)
+def get_direct_media(url: str = Query(..., description="A publisher share link")):
+    """Resolve a share link and redirect to the media file behind it.
+
+    PCloud (and similar publishers) hand out a *page* URL with no file
+    extension, so the frontend's extension check cannot tell it is video and
+    never mounts a player. This walks the redirects server-side — re-checking
+    the SSRF gate on every hop — and answers 307 so the browser follows
+    straight to the file. Nothing is buffered: only headers are read.
+
+    Mirrors the YouTube stream path deliberately. The final URL is normally on
+    a different host with no CORS headers, which is why the browser cannot do
+    this hop itself.
+    """
+    try:
+        media = resolve_share_link(url)
+    except ShareLinkError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return RedirectResponse(media.url, status_code=307)
 
 
 @router.get("/videos/stream-info", include_in_schema=False)

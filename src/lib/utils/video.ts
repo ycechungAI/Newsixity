@@ -4,6 +4,41 @@ export interface VideoInfo {
   embedUrl: string;
   playlistId?: string;
   playlistEmbedUrl?: string;
+  /**
+   * True when the URL is a *page* that redirects to the media file, so the
+   * browser must not use `embedUrl` directly. PCloud share links have no file
+   * extension — the shape below matches them and nothing else, because a
+   * generic "resolve any URL" would turn every article link into a fetch.
+   */
+  viaServer?: boolean;
+}
+
+/** Hosts whose share links resolve to a playable file via /api/videos/direct.
+ *
+ * Matched on the registrable domain, so `e.pcloud.link` and `my.pcloud.com`
+ * qualify while `pcloud.link.evil.example` does not. */
+const SHARE_LINK_HOSTS = ['pcloud.com', 'pcloud.link', 'pc.cd'];
+
+/** A publisher share link: a page URL with no media file extension. */
+export function isShareLink(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return SHARE_LINK_HOSTS.some((d) => host === d || host.endsWith('.' + d));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The URL to hand a `<video src>`.
+ *
+ * Share links go through the backend, which follows the redirects and answers
+ * 307 — the final file is usually on another host with no CORS headers, so the
+ * browser cannot follow the hop itself. Everything else is used as-is.
+ */
+export function playableSrc(url: string): string {
+  if (!isShareLink(url)) return url;
+  return `/api/videos/direct?url=${encodeURIComponent(url)}`;
 }
 
 /**
@@ -191,6 +226,22 @@ export function extractVideoInfo(url: string): VideoInfo | null {
         type: 'direct',
         videoId: url,
         embedUrl: url,
+        // A share link that happens to end in .mp4 still 302s to the real
+        // file, so it takes the same server path as the extensionless form.
+        viaServer: isShareLink(url),
+      };
+    }
+
+    // Publisher share links: a page URL that redirects to the media file.
+    // Checked *after* the extension test so a real .mp4 keeps its identity,
+    // and before the null return because these carry no extension at all —
+    // which is why they produced no player before.
+    if (isShareLink(url)) {
+      return {
+        type: 'direct',
+        videoId: url,
+        embedUrl: url,
+        viaServer: true,
       };
     }
 
