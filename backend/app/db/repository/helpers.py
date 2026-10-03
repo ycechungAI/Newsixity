@@ -1,5 +1,6 @@
 """Shared helpers, types, and constants for the repository layer."""
 
+import json
 from dataclasses import dataclass
 
 from app.db.models import Article as ArticleModel
@@ -31,6 +32,10 @@ class Article:
     # Search only: FTS5 snippet with <mark>…</mark> around matched terms,
     # already HTML-escaped. None everywhere else.
     highlight: str | None = None
+    # spec-v0.5 6.1: the five score components behind relevance_score, parsed
+    # from the JSON column. None for an article scored before parts were
+    # recorded — absence of an explanation, not an explanation of zero.
+    relevance_score_parts: dict[str, float] | None = None
 
 
 @dataclass
@@ -68,6 +73,33 @@ class ArticleGroup:
     articles: list[Article]
 
 
+def _parse_score_parts(raw: object) -> dict[str, float] | None:
+    """Parse the relevance_score_parts JSON column, tolerating garbage.
+
+    A row can hold anything: this column was written by an older build, by a
+    future one with different keys, or by hand. A malformed value must not take
+    down the article list, so it degrades to None ("no explanation available")
+    rather than raising on every read.
+    """
+    if isinstance(raw, dict):
+        candidate = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            candidate = json.loads(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if not isinstance(candidate, dict):
+        return None
+    return {
+        str(k): float(v)
+        for k, v in candidate.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    } or None
+
+
 def map_article_row(row: dict) -> Article:
     """Map a DB row (from ARTICLE_SELECT JOIN) to an Article domain object."""
     raw_link = (row.get("link") or "").strip() if isinstance(row.get("link"), str) else ""
@@ -95,6 +127,7 @@ def map_article_row(row: dict) -> Article:
         fetched_at=row.get("fetched_at") or "",
         relevance_score=row.get("relevance_score") or 0.0,
         is_promoted=bool(row.get("is_promoted")),
+        relevance_score_parts=_parse_score_parts(row.get("relevance_score_parts")),
     )
 
 

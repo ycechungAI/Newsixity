@@ -6,6 +6,15 @@ Port of src/types/index.ts and inline zod validators from all API routes.
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
+# Feed weight bounds (spec-v0.5 3.1). These were 0.1-10.0 at the API while
+# score_article clamped to 0.5-2.0, so a stored 4.0 scored identically to a
+# stored 2.0 and the stored number was a lie. The range is now the range the
+# scorer actually reads, validated at the boundary so what is stored is what
+# was scored. The presets in the UI (0.5 / 1.0 / 1.5 / 2.0) are the endpoints
+# and the two midpoints of exactly this range.
+FEED_WEIGHT_MIN = 0.5
+FEED_WEIGHT_MAX = 2.0
+
 
 class Category(BaseModel):
     id: int
@@ -56,6 +65,11 @@ class Article(BaseModel):
     relevanceScore: float = Field(validation_alias="relevance_score", default=0.0)
     isPromoted: bool = Field(validation_alias="is_promoted", default=False)
     highlight: Optional[str] = None
+    # The five score components behind relevanceScore (spec-v0.5 6.2), so the
+    # UI can explain the order instead of showing a bare number.
+    relevanceScoreParts: Optional[dict[str, float]] = Field(
+        validation_alias="relevance_score_parts", default=None
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -348,14 +362,7 @@ class FeedUpdateRequestBody(BaseModel):
 
 class FeedWeightUpdateRequestBody(BaseModel):
     feedId: int = Field(validation_alias="feed_id")
-    weight: float
-
-    @field_validator("weight")
-    @classmethod
-    def validate_weight(cls, v: float) -> float:
-        if v < 0.1 or v > 10.0:
-            raise ValueError("Weight must be between 0.1 and 10.0")
-        return v
+    weight: float = Field(ge=FEED_WEIGHT_MIN, le=FEED_WEIGHT_MAX)
 
     model_config = {"populate_by_name": True}
 
