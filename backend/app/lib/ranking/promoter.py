@@ -74,17 +74,7 @@ def score_and_promote_all() -> None:
             logger.warning("[Newsixity] Scoring error for %s: %s", cat.slug, e)
 
 
-def is_capped_category(slug: str) -> bool:
-    """Whether a category is ranked (the v0.4 "capped" concept, spec-v0.5 1.4).
-
-    Now a stored setting rather than a list literal, so Settings › Ranking can
-    turn a section's ranking on or off.
-    """
-    return get_ranking_settings(slug).ranked
-
-
 __all__ = [
     "score_and_promote",
     "score_and_promote_all",
-    "is_capped_category",
 ]

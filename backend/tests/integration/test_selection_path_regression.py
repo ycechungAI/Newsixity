@@ -18,6 +18,7 @@ that keeps a fresh install scoring exactly as v0.4 did.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -578,6 +579,173 @@ class TestEveryFeedIsReachable:
         """A weight is only honest if the section's ranking can be turned on."""
         slugs = {s["categorySlug"] for s in client.get("/api/ranking/settings").json()["settings"]}
         assert {"technology", "security", "consumer-tech"} <= slugs
+
+
+class TestPromoteLimitIsConfigurable:
+    """§5/§2.9 — the promote limit must come from settings, not a constant.
+
+    The caps tests prove the *storage* limits are configurable. This proves the
+    other half: `promote_limit` is a separate mechanism (what ranking promotes,
+    not what the refresh stores) and must govern promotion too. A panel that
+    saved the number and a promoter that ignored it would look correct.
+    """
+
+    def test_configured_promote_limit_is_used(self, monkeypatch):
+        from app.db.repository import upsert_ranking_settings
+        from app.lib.ranking import promoter
+
+        used: list[int] = []
+        monkeypatch.setattr(promoter, "get_today_article_ids", lambda slug: [1, 2, 3])
+        monkeypatch.setattr(
+            promoter, "score_articles_for_category", lambda slug, ids, weights=None: None
+        )
+        monkeypatch.setattr(
+            promoter, "promote_top_articles", lambda slug, limit: used.append(limit)
+        )
+
+        upsert_ranking_settings("finance", promote_limit=7)
+        promoter.score_and_promote("finance")
+
+        assert used == [7], f"promotion ignored the configured limit: {used}"
+
+    def test_explicit_limit_overrides_the_setting(self, monkeypatch):
+        """The ``limit`` argument still wins — the Console passes it directly."""
+        from app.db.repository import upsert_ranking_settings
+        from app.lib.ranking import promoter
+
+        used: list[int] = []
+        monkeypatch.setattr(promoter, "get_today_article_ids", lambda slug: [1])
+        monkeypatch.setattr(
+            promoter, "score_articles_for_category", lambda slug, ids, weights=None: None
+        )
+        monkeypatch.setattr(
+            promoter, "promote_top_articles", lambda slug, limit: used.append(limit)
+        )
+
+        upsert_ranking_settings("finance", promote_limit=7)
+        promoter.score_and_promote("finance", limit=3)
+
+        assert used == [3], used
+
+    def test_partial_update_keeps_the_fields_it_was_not_given(self):
+        """The PUT is documented as "omitted fields keep their stored value".
+
+        Without this, saving one cap from the Settings panel would silently
+        reset the promote limit and the score weights back to their defaults.
+        """
+        from app.db.repository import upsert_ranking_settings
+
+        upsert_ranking_settings(
+            "sports",
+            feed_soft_cap=2,
+            feed_hard_cap=4,
+            promote_limit=11,
+            ranked=False,
+            weights={"groupSize": 50, "preferenceMatch": 20, "sourceWeight": 10,
+                     "recency": 10, "titleImportance": 10},
+        )
+        upsert_ranking_settings("sports", feed_soft_cap=3)  # a single-field save
+
+        after = get_ranking_settings("sports")
+        assert after.feed_soft_cap == 3
+        assert after.feed_hard_cap == 4, "an untouched cap was reset"
+        assert after.promote_limit == 11, "an untouched promote limit was reset"
+        assert after.ranked is False, "an untouched ranked flag was reset"
+        assert after.weights["groupSize"] == 50, "untouched score weights were reset"
+
+
+class TestBackgroundTasksStayReferenced:
+    """Fire-and-forget work must be held until it finishes.
+
+    asyncio keeps only a *weak* reference to a running task, so a task nobody
+    holds can be garbage collected mid-execution and its work silently never
+    happens. These cover the three call sites that schedule work this way:
+    post-refresh summarization, the feed-weights-adjacent refresh route, and
+    on-save summarization.
+    """
+
+    def _helper(self, module_name):
+        import importlib
+
+        return importlib.import_module(module_name)
+
+    @pytest.mark.parametrize(
+        "module_name", ["app.routers.feeds", "app.routers.articles"]
+    )
+    def test_task_is_held_until_it_completes(self, module_name):
+        mod = self._helper(module_name)
+        seen = {}
+
+        async def work():
+            seen["ran"] = True
+
+        async def scenario():
+            mod._run_in_background(work())
+            # Mid-flight: the task must be reachable from the module's set.
+            held = bool(mod._BACKGROUND_TASKS)
+            await asyncio.gather(*list(mod._BACKGROUND_TASKS))
+            return held
+
+        assert asyncio.run(scenario()) is True, (
+            "the task was not referenced while running — it can be collected "
+            "before it does any work"
+        )
+        assert seen.get("ran") is True
+        assert not mod._BACKGROUND_TASKS, (
+            "a finished task was never released — the set would grow forever"
+        )
+
+    def test_refresh_holds_its_summarize_task(self, monkeypatch):
+        import app.lib.scheduler.refresh as refresh_mod
+
+        held_during = {}
+
+        async def scenario():
+            refresh_mod._BACKGROUND_TASKS.clear()
+
+            async def fake_summarize(limit):
+                held_during["held"] = bool(refresh_mod._BACKGROUND_TASKS)
+
+            monkeypatch.setattr(refresh_mod, "_fire_background_summarize", fake_summarize)
+            task = asyncio.create_task(refresh_mod._fire_background_summarize(1))
+            refresh_mod._BACKGROUND_TASKS.add(task)
+            task.add_done_callback(refresh_mod._BACKGROUND_TASKS.discard)
+            await task
+
+        asyncio.run(scenario())
+        assert held_during.get("held") is True, (
+            "the refresh's background summarization ran while unreferenced"
+        )
+
+
+class TestScorePartsRoundTrip:
+    """§6.2 — valid parts must survive the DB → API → UI path."""
+
+    def test_valid_parts_are_returned_by_the_api(self, request, client):
+        from app.db.repository import get_article_by_id
+        from app.lib.ranking.scorer import score_articles_for_category
+
+        feed = create_feed(
+            f"https://reg.example/{request.node.name}-rt.xml", "Reg RoundTrip", "technology"
+        )
+        article_id = upsert_article(
+            feed.id,
+            {"guid": "rt-1", "title": "Urgent crisis at the border", "link": "https://reg.example/rt",
+             "published_at": "2026-10-02T00:00:00Z", "content": None},
+            "rt-1-hash",
+        )
+        score_articles_for_category("technology", [article_id])
+
+        expected = get_article_by_id(article_id).relevance_score_parts
+        assert expected, "nothing was persisted to round-trip"
+
+        body = client.get("/api/articles", params={"category": "technology", "limit": 100}).json()
+        article = next(a for a in body if a["id"] == article_id)
+
+        assert article["relevanceScoreParts"] == pytest.approx(expected)
+        assert article["relevanceScore"] == pytest.approx(
+            get_article_by_id(article_id).relevance_score
+        )
 
 
 class TestRankingAppliesBeyondV04CappedCategories:

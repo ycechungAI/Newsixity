@@ -59,10 +59,6 @@ class RankingSettings:
     ranked: bool
     weights: dict[str, int]
 
-    def score_weight_points(self, key: str) -> int:
-        """The percentage a signal may contribute, for `key` in SCORE_WEIGHT_KEYS."""
-        return self.weights.get(key, DEFAULT_SCORE_WEIGHTS[key])
-
 
 def _defaults(category_slug: str) -> RankingSettings:
     return RankingSettings(
@@ -165,19 +161,3 @@ def upsert_ranking_settings(
         db.commit()
 
     return get_ranking_settings(category_slug)
-
-
-def is_ranked_category(category_slug: str) -> bool:
-    """Whether this section is scored and promoted.
-
-    Replaces the module-level CAPPED_CATEGORIES membership test wherever the
-    question is "should ranking act on this?", so turning a section's ranking
-    on in Settings takes effect without a code change.
-    """
-    return get_ranking_settings(category_slug).ranked
-
-
-def ranked_categories() -> list[str]:
-    """Every section currently marked ranked, in the canonical seeded order."""
-    stored = {s.category_slug: s for s in get_all_ranking_settings()}
-    return [slug for slug, s in stored.items() if s.ranked]
