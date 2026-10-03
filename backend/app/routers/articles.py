@@ -1,6 +1,7 @@
 """Articles endpoints — /api/articles/*."""
 
 from typing import Optional
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
@@ -28,6 +29,18 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+# Strong references to in-flight fire-and-forget tasks. asyncio holds only a
+# weak reference to a running task, so an unreferenced one can be collected
+# mid-execution and the work silently never happens — see the same pattern in
+# routers/feeds.py.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _run_in_background(coro) -> None:
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 _ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -129,11 +142,9 @@ async def update_article(article_id: int, body: dict) -> dict:
             # on-save summarizeArticleById call.
             updated = get_article_by_id(article_id)
             if updated and updated.is_saved and not updated.summary:
-                import asyncio
-
                 from app.lib.scheduler import summarize_article_by_id
 
-                asyncio.create_task(summarize_article_by_id(article_id))
+                _run_in_background(summarize_article_by_id(article_id))
 
     article = get_article_by_id(article_id)
     return {"success": True, "categorySlug": article.category_slug if article else None}

@@ -58,13 +58,26 @@ for `src/`, and each behaviour clicked through in the browser against a
 populated database — including the multi-feed category case, which is the one
 that reproduces the original bug.
 
-- [ ] §1 Ranking must actually order the feed
-- [ ] §2 Per-feed caps: soft 5, hard 8, and a 6th only once the whole section has 5
-- [ ] §3 Feed weights are honest about their range
-- [ ] §4 Feed Rankings covers every feed, not a hard-coded subset
-- [ ] §5 Per-category ranking settings, persisted
-- [ ] §6 Explainability — a visible reason for the order
-- [ ] §7 Regression suite for the whole selection path
+- [x] §1 Ranking must actually order the feed
+- [x] §2 Per-feed caps: soft 5, hard 8, and a 6th only once the whole section has 5
+- [x] §3 Feed weights are honest about their range
+- [x] §4 Feed Rankings covers every feed, not a hard-coded subset
+- [x] §5 Per-category ranking settings, persisted
+- [x] §6 Explainability — a visible reason for the order
+- [x] §7 Regression suite for the whole selection path
+
+**Deliberately left open — §1.4's default.** Ranking now *covers* every
+category and the Settings › Ranking panel can turn a section on, but the
+seeded `ranked` flag reproduces v0.4 (on for the five capped sections, off for
+technology, security, top-news, others, weather). Flipping those defaults is
+the open question in §9 ("Should `sort=relevance` become the default at all?")
+and is the user's call, not this change's.
+
+**§9 volume question, now answerable.** §2.1 removed the shared budget, so a
+section stores ~5 × n_feeds articles/day. On the 41-feed install measured
+2026-10-03 that is ~205/day against the old ~140 — and because §5 makes both
+caps per-section and configurable, the ceiling is now a setting rather than a
+hard-coded 20.
 
 ## 1. Ranking must order the feed
 
@@ -268,23 +281,30 @@ The reason every item above shipped broken: nothing tested the selection path
 end to end. `CAPPED_CATEGORIES` and the UI whitelist drifted apart silently,
 and nothing noticed.
 
-- [ ] No feed exceeds the hard cap of 8 in a rolling 24h window
-- [ ] A feed is held at 5 until every other feed in its section has 5
-- [ ] Once the whole section has 5, feeds may insert a 6th up to the hard cap
-- [ ] Duplicates do not consume a feed's soft or hard cap allowance
-- [ ] A section of many feeds and a section of few feeds each behave correctly
-- [ ] The per-section cap and its query are fully removed — no orphan callers
-- [ ] Refresh reports which limit stopped each capped feed
-- [ ] Ranking actually changes `ORDER BY` on a real list response
-- [ ] `relevance` ordering degrades gracefully with partially scored data
-- [ ] Weight out of range is rejected at the boundary
-- [ ] Unknown `feedId` PATCH is 404, not `success: true`
-- [ ] Protected feed refuses a weight change
-- [ ] Every preset in §3.5 round-trips and renders the label it stores
-- [ ] Refresh reports `capped` when a section's budget is spent
-- [ ] Sections are independent — one section spending 30 does not reduce another's
-- [ ] Every enabled feed is reachable in Feed Rankings — no whitelist
-- [ ] Default settings reproduce v0.4 scores
+- [x] No feed exceeds the hard cap of 8 in a rolling 24h window
+- [x] A feed is held at 5 until every other feed in its section has 5
+- [x] Once the whole section has 5, feeds may insert a 6th up to the hard cap
+- [x] Duplicates do not consume a feed's soft or hard cap allowance
+- [x] A section of many feeds and a section of few feeds each behave correctly
+- [x] The per-section cap and its query are fully removed — no orphan callers
+- [x] Refresh reports which limit stopped each capped feed
+- [x] Ranking actually changes `ORDER BY` on a real list response
+- [x] `relevance` ordering degrades gracefully with partially scored data
+- [x] Weight out of range is rejected at the boundary
+- [x] Unknown `feedId` PATCH is 404, not `success: true`
+- [x] Protected feed refuses a weight change
+- [x] Every preset in §3.5 round-trips and renders the label it stores
+- [x] Refresh reports `capped` when a section's budget is spent
+- [x] Sections are independent — one section spending 30 does not reduce another's
+- [x] Every enabled feed is reachable in Feed Rankings — no whitelist
+- [x] Default settings reproduce v0.4 scores
+
+One caveat on the "renders the label it stores" row: the round-trip and the
+shared-constant invariant are pinned in `tests/integration/test_feed_weights.py`
+(`TestWeightWriteHonesty`), but *rendering* is frontend-only and this repo has
+no frontend test harness. `src/lib/ranking/weightPresets.ts` now feeds both the
+`<option value>` and the `<select value>` from one `presetValue()`, so the
+string mismatch that caused the original bug is no longer expressible.
 
 ## 8. Deliberately not in scope
 
