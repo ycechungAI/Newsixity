@@ -29,6 +29,15 @@ from app.db.repository.helpers import Article
 from app.lib.dedup.grouping import group_articles
 from app.lib.dedup.similarity import hash_title, is_duplicate
 from app.lib.integrations.rss import FeedResult, fetch_all_feeds_sync
+from app.lib.ranking.scorer import (
+    _compute_recency_score,
+    _compute_title_importance,
+)
+from app.lib.ranking.preferences import (
+    get_preferences_for_category,
+    score_preference_match,
+)
+from app.db.repository import get_feed_source_weight
 from app.lib.ranking.promoter import score_and_promote_all
 from app.lib.rss.feeds import seed_all_feeds, DEFAULT_FEEDS
 from app.lib.scheduler.summarizer import background_summarize
@@ -41,6 +50,28 @@ logger = logging.getLogger("newsixity")
 # skipped for the rest of the 24h window.
 FEED_DAILY_SOFT_CAP = 5
 FEED_DAILY_HARD_CAP = 8
+
+
+def _candidate_score(parsed, preference_keywords, weight_norm: float) -> float:
+    """Priority of a not-yet-inserted article within its feed.
+
+    Composition (each term already computed elsewhere, here combined):
+
+      title importance   40%  "breaking/urgent/historic..." signal
+      preference match   35%  against the user's learned keyword profile
+      recency            20%  scorer's 6h-full, 24h-zero rule
+      source weight       5%  Feed Rankings dial, neutralized around 1.0
+
+    Recency is intentionally smaller than in the post-insert scorer: an article
+    that is marked important but a day old should usually yield to a fresh one,
+    not be preserved on the importance band alone. The weights are chosen so
+    preference match can overturn importance on a direct tie, which is how the
+    user's own saves steer the future of the queue.
+    """
+    importance = _compute_title_importance(parsed.title)  # 0..1
+    preference = score_preference_match(parsed.title, preference_keywords)  # 0..1
+    recency = _compute_recency_score(parsed.published_at)  # 0..1
+    return importance * 0.40 + preference * 0.35 + recency * 0.20 + weight_norm * 0.05
 
 
 @dataclass(frozen=True)
@@ -149,6 +180,41 @@ def _run_feed_refresh_sync(
         }
         section_covered = all(v >= FEED_DAILY_SOFT_CAP for v in start_by_feed.values())
 
+        # Learned topic-keyword profile for this section, computed once. The
+        # cut below uses it, and because the keywords are re-learned from
+        # saved-article titles, the ordering improves as the user reads.
+        preference_keywords = get_preferences_for_category(category_slug)
+
+        # Rank each feed's candidates ONCE, before the round-robin loop.
+        # Re-ranking inside the pass loop would re-run the same stable sort and
+        # (being deterministic) return the same first candidate every pass,
+        # defeating the cursor bookkeeping below.
+        #
+        # The cut, done here rather than post-hoc: instead of taking the feed's
+        # XML order, each feed offers its best remaining candidate. Signals
+        # (each already maintained by v0.4's ranking module):
+        #   - title importance (breaking/urgent/historic patterns)
+        #   - learned-preference keyword match (re-learned from saved titles)
+        #   - recency (full within 6h, decays by 24h — scorer's rule)
+        #   - source weight from Feed Rankings
+        # Recency is weighted so a 12h-old headline cannot outrank one 6h old
+        # of comparable importance.
+        ranked_by_feed: dict[int, list] = {}
+        for fr in category_feeds:
+            # get_feed_source_weight hits the database; compute it once per feed
+            # here rather than once per candidate inside _candidate_score.
+            _w = min(max(get_feed_source_weight(fr.feed_id), 0.5), 2.0)
+            _weight_norm = (
+                (_w - 0.5) / 0.5 * 0.5
+                if _w <= 1.0
+                else 0.5 + (_w - 1.0) / 1.0 * 0.5
+            )
+            ranked_by_feed[fr.feed_id] = sorted(
+                fr.articles,
+                key=lambda a: _candidate_score(a, preference_keywords, _weight_norm),
+                reverse=True,
+            )
+
         # Round-robin: each pass offers every feed in the section one article,
         # then moves to the next pass, so a feed with a hundred entries cannot
         # outrank one with five.
@@ -159,7 +225,7 @@ def _run_feed_refresh_sync(
             exhausted = True
 
             for index, feed_result in enumerate(category_feeds):
-                articles = feed_result.articles
+                articles = ranked_by_feed[feed_result.feed_id]
                 cursor = cursors[index]
                 start = start_by_feed[feed_result.feed_id]
                 inserted_here = inserted_this_session_by_feed.get(feed_result.feed_id, 0)

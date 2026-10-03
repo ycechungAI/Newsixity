@@ -158,6 +158,60 @@ def _per_feed_counts(feeds, prefix_free_titles=None):
     return out
 
 
+class TestQualityCut:
+    """§2 currently stores whatever arrives first in each feed's XML. When a
+    feed lists five filler headlines before its breaking ones, all five slots
+    go to filler and the high-impact stories never land. The cut should rank
+    candidates by importance + preference match + source weight within each
+    feed's turn."""
+
+    def test_quality_beats_xml_order_within_a_feed(self, world, monkeypatch):
+        import app.lib.scheduler.refresh as refresh_mod
+
+        # One feed, so the soft cap is the only governor: exactly 5 stored.
+        filler = [
+            "Local council publishes agenda",
+            "Library timetable updated for autumn",
+            "Council confirms parking rates",
+            "Weather outlook for the weekend",
+            "Volunteer group meets Tuesday",
+        ]
+        # The strong ones sit later in the feed's XML list.
+        strong = [
+            "Breaking: wildfire forces evacuations near coast",
+            "Urgent: hospital network hit by outage",
+            "Crisis deepens in border talks",
+            "Record surge in market volatility",
+            "Historic treaty signed at summit",
+        ]
+
+        def one_feed():
+            feed_id = world[0]
+            arts = [_parsed(t) for t in filler] + [_parsed(t) for t in strong]
+            return [
+                FeedResult(
+                    feed_id=feed_id,
+                    feed_url=f"https://cap.example/{feed_id}.xml",
+                    articles=arts,
+                )
+            ]
+
+        monkeypatch.setattr(refresh_mod, "fetch_all_feeds_sync", lambda: one_feed())
+        monkeypatch.setattr(
+            refresh_mod, "get_feed_article_count_in_last_24h", lambda feed_id: 0
+        )
+
+        refresh_mod._run_feed_refresh_sync()
+
+        stored_titles = {a.title for a in get_articles_by_category("world-news", limit=200)}
+        assert stored_titles, "nothing was stored"
+        overlap = {t for t in strong if t in stored_titles}
+        assert len(overlap) >= 3, (
+            f"quality cut lost to XML order: stored {len(stored_titles)} but only "
+            f"{len(overlap)} of the strong headlines made it"
+        )
+
+
 class TestHardCap:
     def test_no_feed_exceeds_hard_cap(self, world, monkeypatch):
         """§2.2 - 8 is absolute, however busy the feed is."""
