@@ -17,12 +17,14 @@ from dataclasses import asdict, dataclass
 from sqlalchemy.exc import IntegrityError
 
 from app.db.repository import (
+    get_all_feeds,
     get_article_by_id,
     get_article_by_title_hash,
     get_articles_by_category,
     get_articles_by_ids,
     get_feed_article_count_in_last_24h,
     get_feed_category_slug,
+    get_ranking_settings,
     upsert_article,
 )
 from app.db.repository.helpers import Article
@@ -51,6 +53,19 @@ logger = logging.getLogger("newsixity")
 FEED_DAILY_SOFT_CAP = 5
 FEED_DAILY_HARD_CAP = 8
 
+# spec-v0.5 2.9: these are the *defaults*. The refresh reads each section's
+# caps from its ranking-settings row (app/db/repository/ranking_settings.py)
+# so Settings › Ranking can change them; a section with no row falls back to
+# these. They are not the per-section insert cap that was deleted in 2.1, and
+# they are unrelated to DAILY_ARTICLE_LIMIT, which bounds what ranking
+# *promotes* — the caps here bound what the refresh *stores*.
+DEFAULT_FEED_SOFT_CAP = FEED_DAILY_SOFT_CAP
+DEFAULT_FEED_HARD_CAP = FEED_DAILY_HARD_CAP
+
+# Strong references to in-flight fire-and-forget tasks (see the note at
+# _run_feed_refresh_sync's caller).
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 
 def _candidate_score(parsed, preference_keywords, weight_norm: float) -> float:
     """Priority of a not-yet-inserted article within its feed.
@@ -72,6 +87,37 @@ def _candidate_score(parsed, preference_keywords, weight_norm: float) -> float:
     preference = score_preference_match(parsed.title, preference_keywords)  # 0..1
     recency = _compute_recency_score(parsed.published_at)  # 0..1
     return importance * 0.40 + preference * 0.35 + recency * 0.20 + weight_norm * 0.05
+
+
+@dataclass(frozen=True)
+class FeedCapReport:
+    """Why one feed stored fewer articles than its feed offered (spec 2.8).
+
+    Without this, "this feed had nothing new" and "this feed was silenced"
+    are indistinguishable from outside the refresh — which is how 27 feeds
+    went a whole day having fetched successfully and stored nothing, with an
+    empty ``last_error`` and nothing to show for it.
+    """
+
+    feed_id: int
+    feed_name: str
+    category_slug: str
+    #: "soft" | "hard" | None. None means the feed drained its own feed.
+    limit: str | None
+    #: Articles this feed has stored in the rolling 24h window, after this run.
+    stored_24h: int
+    soft_cap: int
+    hard_cap: int
+
+
+@dataclass(frozen=True)
+class RefreshOutcome:
+    """What one refresh pass did, including the per-feed cap accounting."""
+
+    refreshed: int
+    new_articles: int
+    errors: list[str]
+    caps: list[FeedCapReport]
 
 
 @dataclass(frozen=True)
@@ -113,13 +159,19 @@ def _sort_feed_results_for_finance_priority(feed_results):
 
 def _run_feed_refresh_sync(
     category_filter: str | None = None,
-) -> tuple[int, int, list[str]]:
+) -> RefreshOutcome:
     """
     The blocking half of the refresh: seed, fetch, dedup, upsert, group, score.
-    Returns (refreshed_count, new_articles_count, errors).
+
+    Returns a RefreshOutcome, whose `caps` explains per feed which limit — if
+    any — held it back (spec-v0.5 2.8).
     """
     seed_all_feeds()
     raw_feed_results = fetch_all_feeds_sync()
+
+    # One pass for feed names so the cap report (§2.8) can name the feed it is
+    # talking about, instead of making the user match a URL to a list.
+    feed_names = {f.id: f.name for f in get_all_feeds()}
 
     # Sort for finance priority
     feed_results = _sort_feed_results_for_finance_priority(raw_feed_results)
@@ -134,6 +186,13 @@ def _run_feed_refresh_sync(
     # feed_id -> which limit stopped it ("soft" / "hard"), so a refresh can
     # report a silenced feed instead of looking identical to a quiet one.
     capped_feeds: dict[int, str] = {}
+    # Every feed that offered articles, for the same report.
+    offered_counts: dict[int, int] = {}
+    # feed_id -> (soft_cap, hard_cap) for the section it belongs to.
+    feed_caps: dict[int, tuple[int, int]] = {}
+    # feed_id -> articles it already had when this refresh started. Collected
+    # across sections for the §2.8 report, which runs after the insert loop.
+    start_by_feed_final: dict[int, int] = {}
 
     # Bucket usable feeds by category.
     #
@@ -149,6 +208,8 @@ def _run_feed_refresh_sync(
             continue
 
         refreshed += 1
+
+        offered_counts[feed_result.feed_id] = len(feed_result.articles)
 
         category_slug = get_feed_category_slug(feed_result.feed_id)
         if not category_slug:
@@ -168,6 +229,15 @@ def _run_feed_refresh_sync(
             category_slug, limit=200
         )
 
+        # Per-feed caps for THIS section (spec-v0.5 2.9). Read once here rather
+        # than from module constants, so Settings › Ranking is what governs
+        # storage; a section with no settings row falls back to 5/8.
+        section_settings = get_ranking_settings(category_slug)
+        soft_cap = section_settings.feed_soft_cap
+        hard_cap = section_settings.feed_hard_cap
+        for fr in category_feeds:
+            feed_caps[fr.feed_id] = (soft_cap, hard_cap)
+
         # Per-feed starting positions in the rolling 24h window, plus the
         # section-wide fairness floor (spec-v0.5 2.3 / 2.4).
         #
@@ -178,7 +248,8 @@ def _run_feed_refresh_sync(
             fr.feed_id: get_feed_article_count_in_last_24h(fr.feed_id)
             for fr in category_feeds
         }
-        section_covered = all(v >= FEED_DAILY_SOFT_CAP for v in start_by_feed.values())
+        start_by_feed_final.update(start_by_feed)
+        section_covered = all(v >= soft_cap for v in start_by_feed.values())
 
         # Learned topic-keyword profile for this section, computed once. The
         # cut below uses it, and because the keywords are re-learned from
@@ -234,11 +305,11 @@ def _run_feed_refresh_sync(
                 # advance the cursor without spending allowance (2.6).
                 while cursor < len(articles):
                     # Hard cap, always enforced.
-                    if start + inserted_here >= FEED_DAILY_HARD_CAP:
+                    if start + inserted_here >= hard_cap:
                         break
                     # Soft cap, gated on the whole section having met its floor.
                     # A feed still below the soft cap is always free to insert.
-                    if start + inserted_here >= FEED_DAILY_SOFT_CAP and not section_covered:
+                    if start + inserted_here >= soft_cap and not section_covered:
                         break
 
                     parsed = articles[cursor]
@@ -290,8 +361,8 @@ def _run_feed_refresh_sync(
                 # not "work left to do" this pass - otherwise `exhausted` never
                 # flips and the outer loop spins forever.
                 blocked = (
-                    start + inserted_here >= FEED_DAILY_HARD_CAP
-                    or (start + inserted_here >= FEED_DAILY_SOFT_CAP and not section_covered)
+                    start + inserted_here >= hard_cap
+                    or (start + inserted_here >= soft_cap and not section_covered)
                 )
                 if cursor < len(articles) and not blocked:
                     exhausted = False
@@ -301,7 +372,7 @@ def _run_feed_refresh_sync(
                 if articles and blocked:
                     capped_feeds[feed_result.feed_id] = (
                         "hard"
-                        if start + inserted_here >= FEED_DAILY_HARD_CAP
+                        if start + inserted_here >= hard_cap
                         else "soft"
                     )
 
@@ -316,7 +387,7 @@ def _run_feed_refresh_sync(
 
     logger.info("[Newsixity] Feed refresh complete: %d refreshed, %d new articles", refreshed, new_articles)
 
-    # Score and promote articles for capped categories.
+    # Score and promote articles for every ranked category.
     try:
         score_and_promote_all()
         logger.info("[Newsixity] Article scoring and promotion complete")
@@ -324,7 +395,29 @@ def _run_feed_refresh_sync(
         logger.warning("[Newsixity] Scoring/promotion error: %s", e)
         errors.append("Scoring/promotion error")
 
-    return refreshed, new_articles, errors
+    # §2.8 / §2.10: one row per feed that offered something, saying whether it
+    # was stored or held back, and by which limit. ``limit`` is None for a
+    # feed that simply ran out of new stories, which is the distinction the
+    # whole report exists to make.
+    caps: list[FeedCapReport] = []
+    for feed_id, offered in offered_counts.items():
+        if not offered:
+            continue
+        stored = start_by_feed_final.get(feed_id, 0) + inserted_this_session_by_feed.get(feed_id, 0)
+        soft, hard = feed_caps.get(feed_id, (DEFAULT_FEED_SOFT_CAP, DEFAULT_FEED_HARD_CAP))
+        caps.append(
+            FeedCapReport(
+                feed_id=feed_id,
+                feed_name=feed_names.get(feed_id, str(feed_id)),
+                category_slug=get_feed_category_slug(feed_id) or "",
+                limit=capped_feeds.get(feed_id),
+                stored_24h=stored,
+                soft_cap=soft,
+                hard_cap=hard,
+            )
+        )
+
+    return RefreshOutcome(refreshed, new_articles, errors, caps)
 
 
 async def _fire_background_summarize(limit: int = 10) -> None:
@@ -335,13 +428,31 @@ async def _fire_background_summarize(limit: int = 10) -> None:
         logger.warning("[Newsixity] Background summarization error: %s", e)
 
 
-async def refresh_all_feeds(category_filter: str | None = None) -> None:
-    """Async entry point for the RSS refresh scheduler job."""
+async def refresh_all_feeds(category_filter: str | None = None) -> RefreshOutcome | None:
+    """Async entry point for the RSS refresh scheduler job.
+
+    Returns the outcome so the scheduler can log the cap accounting; None when
+    the pass raised, since that is already logged as an error.
+    """
     try:
-        await asyncio.to_thread(_run_feed_refresh_sync, category_filter)
+        outcome = await asyncio.to_thread(_run_feed_refresh_sync, category_filter)
     except Exception as e:  # noqa: BLE001
         logger.error("[Newsixity] Feed refresh error: %s", e)
-        return
+        return None
+
+    held = [c for c in outcome.caps if c.limit]
+    if held:
+        logger.info(
+            "[Newsixity] %d of %d feeds with articles were capped: %s",
+            len(held),
+            len(outcome.caps),
+            ", ".join(f"{c.feed_name} ({c.limit} cap {c.stored_24h})" for c in held),
+        )
 
     # Background-summarize prioritized articles, fire-and-forget (matches Node).
-    asyncio.create_task(_fire_background_summarize(10))
+    # The reference is kept until completion: asyncio holds only a weak
+    # reference to a running task, so an unreferenced one can be collected
+    # mid-execution and the summarization silently never happens.
+    _task = asyncio.create_task(_fire_background_summarize(10))
+    _BACKGROUND_TASKS.add(_task)
+    _task.add_done_callback(_BACKGROUND_TASKS.discard)

@@ -29,7 +29,13 @@ from app.lib.utils.url import parse_http_url
 
 CULL_UNSUMMARIZED_AGE_MONTHS = 6
 CULL_SUMMARIZED_AGE_MONTHS = 12
-CATEGORY_DAILY_INSERT_CAP = 20
+
+# spec-v0.5 2.1 removed CATEGORY_DAILY_INSERT_CAP. A budget shared across a
+# whole section was first-come-first-served: the first feed processed drained
+# it and every other feed fetched successfully and stored nothing for the rest
+# of the 24h window. The per-feed caps in FEED_DAILY_SOFT_CAP /
+# FEED_DAILY_HARD_CAP (app/lib/scheduler/refresh.py) bound the same thing one
+# level down, so no feed can be silenced by another.
 
 
 @dataclass
@@ -211,26 +217,14 @@ def remove_article_from_queue(article_id: int) -> None:
         db.commit()
 
 
-def get_category_articles_count_in_last_24h(category_slug: str) -> int:
-    with SessionLocal() as db:
-        return db.execute(
-            select(func.count(ArticleModel.id))
-            .select_from(ArticleModel)
-            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
-            .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
-            .where(
-                CategoryModel.slug == category_slug,
-                ArticleModel.fetched_at >= func.datetime("now", "-1 day"),
-            )
-        ).scalar() or 0
-
-
 def get_feed_article_count_in_last_24h(feed_id: int) -> int:
     """Articles one feed has stored in the rolling 24h window.
 
-    The per-feed counterpart to get_category_articles_count_in_last_24h, which
-    the per-feed insert caps depend on. Same window and same `fetched_at`
-    column, so the two agree on what "the last day" means.
+    Counts the rolling window the per-feed insert caps depend on. There is no
+    per-section equivalent any more: spec-v0.5 2.1 deleted
+    get_category_articles_count_in_last_24h along with the shared
+    CATEGORY_DAILY_INSERT_CAP it served, since a section-wide budget was what
+    let the first feed silence the rest.
 
     One query per feed per refresh is acceptable: feeds number in the tens and
     the refresh already fetches every feed over the network.

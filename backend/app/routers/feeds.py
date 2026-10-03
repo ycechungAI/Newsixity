@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.repository import (
-    CAPPED_CATEGORIES,
     DuplicateFeedError,
     FeedNotFoundError,
     ProtectedFeedError,
@@ -14,6 +13,7 @@ from app.db.repository import (
     create_feed,
     delete_feed,
     get_all_feeds,
+    get_category_by_slug,
     update_feed,
     update_feed_source_weight,
 )
@@ -30,6 +30,21 @@ from app.lib.scheduler.summarizer import background_summarize
 from app.lib.server.rate_limit import TEN_MIN_MS, rate_limit
 
 router = APIRouter()
+
+# Strong references to in-flight fire-and-forget tasks.
+#
+# asyncio only holds a weak reference to a running task, so an unreferenced
+# task can be garbage collected mid-execution and the work simply never
+# happens — silently. This is the documented pattern for keeping them alive:
+# hold the task here, and drop it from the set once it's done.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _run_in_background(coro) -> None:
+    """Schedule a coroutine and keep it referenced until it finishes."""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 
 @router.get(
@@ -50,26 +65,28 @@ async def list_feeds() -> list[Feed]:
 async def refresh_feeds(category: Optional[str] = Query(None)) -> dict:
     """Trigger RSS feed refresh with optional category filter.
 
-    Implements the full Node algorithm: finance-priority sorting,
-    per-category daily caps, exact+fuzzy dedup, grouping, and promotion.
-    Returns {refreshed, newArticles, errors} matching the Node RefreshResult.
-    Fires background summarization after completion (fire-and-forget).
+    Implements the full algorithm: finance-priority sorting, per-feed daily
+    caps with a section-wide fairness floor, exact+fuzzy dedup, quality cut,
+    grouping, and promotion. Fires background summarization after completion
+    (fire-and-forget).
+
+    The ``caps`` array is the §2.8 report: one entry per feed that had
+    something to offer, with ``limit`` naming the cap that held it back
+    ("soft"/"hard") or null when it simply had nothing new. Without it a
+    silenced feed and a quiet one look identical from outside.
     """
-    if category and category not in CAPPED_CATEGORIES:
+    if category and not get_category_by_slug(category):
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid category. Must be one of: {', '.join(CAPPED_CATEGORIES)}",
+            status_code=400, detail=f"Invalid category: {category}"
         )
 
     # Run the full refresh algorithm synchronously (blocking in thread pool)
     try:
-        refreshed, new_articles, errors = await asyncio.to_thread(
-            _run_feed_refresh_sync, category
-        )
+        outcome = await asyncio.to_thread(_run_feed_refresh_sync, category)
     except Exception as e:
         import logging
         logging.error("[Newsixity] Feed refresh error: %s", e)
-        return {"refreshed": 0, "newArticles": 0, "errors": [f"Internal error: {e}"]}
+        return {"refreshed": 0, "newArticles": 0, "errors": [f"Internal error: {e}"], "caps": []}
 
     # Fire-and-forget background summarization after refresh completes (matches Node)
     async def fire_summarize():
@@ -79,9 +96,25 @@ async def refresh_feeds(category: Optional[str] = Query(None)) -> dict:
             import logging
             logging.warning("[Newsixity] Background summarization error: %s", e)
 
-    asyncio.create_task(fire_summarize())
+    _run_in_background(fire_summarize())
 
-    return {"refreshed": refreshed, "newArticles": new_articles, "errors": errors}
+    return {
+        "refreshed": outcome.refreshed,
+        "newArticles": outcome.new_articles,
+        "errors": outcome.errors,
+        "caps": [
+            {
+                "feedId": c.feed_id,
+                "feedName": c.feed_name,
+                "categorySlug": c.category_slug,
+                "limit": c.limit,
+                "stored24h": c.stored_24h,
+                "softCap": c.soft_cap,
+                "hardCap": c.hard_cap,
+            }
+            for c in outcome.caps
+        ],
+    }
 
 
 @router.get(
@@ -127,11 +160,18 @@ async def get_feed_weights() -> dict:
     dependencies=[Depends(rate_limit("feeds-weights-patch", 60, TEN_MIN_MS))],
 )
 async def update_feed_weights(body: FeedWeightUpdateRequestBody) -> dict:
-    """Update source weight for a feed."""
-    if body.weight < 0.1 or body.weight > 10.0:
-        raise HTTPException(status_code=400, detail="Weight must be between 0.1 and 10.0")
+    """Update source weight for a feed.
 
-    update_feed_source_weight(body.feedId, body.weight)
+    The range is validated in the schema (0.5-2.0 — spec-v0.5 3.1), the same
+    range score_article reads, so a stored weight is always the weight that was
+    scored. An unknown feedId is a 404 and the protected Manual Links feed is a
+    403, both of which the Settings UI now surfaces instead of silently
+    showing a change that never landed.
+    """
+    try:
+        update_feed_source_weight(body.feedId, body.weight)
+    except (FeedNotFoundError, ProtectedFeedError) as e:
+        raise _feed_http_error(e) from e
 
     return {"success": True, "feedId": body.feedId, "weight": body.weight}
 

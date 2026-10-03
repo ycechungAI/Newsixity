@@ -233,8 +233,7 @@ class TestHardCap:
             refresh_mod, "get_feed_article_count_in_last_24h", lambda feed_id: 0
         )
 
-        _refreshed, new_articles, _errors = refresh_mod._run_feed_refresh_sync()
-        assert new_articles <= 8
+        assert refresh_mod._run_feed_refresh_sync().new_articles <= 8
 
 
 class TestFairnessFloor:
@@ -316,7 +315,7 @@ class TestDuplicatesDoNotCostAllowance:
             refresh_mod, "get_feed_article_count_in_last_24h", lambda feed_id: 0
         )
 
-        _refreshed, new_articles, _errors = refresh_mod._run_feed_refresh_sync()
+        refresh_mod._run_feed_refresh_sync()
         per_feed = _per_feed_counts(world)
 
         assert all(v > 0 for v in per_feed.values()), (
