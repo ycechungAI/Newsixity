@@ -119,6 +119,12 @@ class Article(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=_NOW)
     # Added via migration in schema.ts.
     relevance_score: Mapped[float | None] = mapped_column(Float, server_default=text("0"))
+    # The five score components behind relevance_score, as JSON (spec-v0.5 6.1).
+    # A JSON column rather than five more columns: the scorer already computes
+    # the parts, and persisting them is what lets the UI answer "why is this
+    # ranked first?" instead of showing an unexplainable number. NULL means
+    # "scored before parts were recorded", which is not the same as "no parts".
+    relevance_score_parts: Mapped[str | None] = mapped_column(Text)
     is_promoted: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     __table_args__ = (
@@ -274,6 +280,67 @@ class UserPreference(Base):
         Index("idx_user_preferences_category", "category_slug"),
         {"sqlite_autoincrement": True},
     )
+
+
+class RankingSetting(Base):
+    """Per-section ranking and refresh limits (spec-v0.5 §5).
+
+    Keyed by category slug rather than by category_id: the slug is what the
+    API, the refresh loop, and the frontend all address a section by, and
+    seeding a row must not depend on which integer id a category happens to
+    have on this install.
+
+    ``feed_soft_cap`` / ``feed_hard_cap`` are what the refresh stores (spec §2).
+    ``promote_limit`` is what ranking *promotes* (spec §2.9) — a different
+    mechanism and deliberately a different column. The five score weights are
+    percentages summing to 100, defaulting to v0.4's 30/30/20/10/10.
+
+    A new table, so ``create_all`` builds it on an existing database with no
+    ALTER and no migration. Absent row = defaults, which is what makes a fresh
+    install score exactly as v0.4 did (spec §5.3).
+    """
+
+    __tablename__ = "ranking_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # Per-feed daily insert caps, in articles per rolling 24h window.
+    feed_soft_cap: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("5")
+    )
+    feed_hard_cap: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("8")
+    )
+    # How many articles ranking promotes per day in this section.
+    promote_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("20")
+    )
+    # Whether this section is scored and promoted at all. 0 = articles are
+    # stored and listed but never ranked, so a weight here does nothing.
+    ranked: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
+    # The five score weights, as percentages summing to 100.
+    weight_group_size: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("30")
+    )
+    weight_preference_match: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("30")
+    )
+    weight_source_weight: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("20")
+    )
+    weight_recency: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("10")
+    )
+    weight_title_importance: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("10")
+    )
+    updated_at: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=_NOW
+    )
+
+    __table_args__ = {"sqlite_autoincrement": True}
 
 
 class PodcastFeed(Base):

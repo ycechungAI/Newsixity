@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
 import FeedManager from "@/components/settings/FeedManager";
+import FeedRankings from "@/components/settings/FeedRankings";
+import RankingSettingsPanel from "@/components/settings/RankingSettingsPanel";
 import SearchLinksManager from "@/components/settings/SearchLinksManager";
 
 interface OllamaModel   { name: string; size: string | number; modified?: string }
 interface SuggestedModel { name: string; size: string; description: string; recommended: boolean; installed: boolean }
-interface Feed {
-  id: number; categoryId: number; name: string; url: string; enabled: boolean;
-  lastFetchedAt: string | null; lastError: string | null; sourceWeight: number; categorySlug?: string;
-}
 
 export default function SettingsPage() {
   const [apiKey,      setApiKey]      = useState("");
@@ -18,15 +16,26 @@ export default function SettingsPage() {
   const [suggestedModels,  setSuggestedModels]  = useState<SuggestedModel[]>([]);
   const [ollamaRunning,    setOllamaRunning]    = useState(false);
 
-  const [feeds,       setFeeds]       = useState<Feed[]>([]);
-  const [feedWeights, setFeedWeights] = useState<Record<number, number>>({});
-  const [feedsOpen,   setFeedsOpen]   = useState(false);
+  // Which sections have ranking switched on (§4.2: Feed Rankings has to be
+  // able to say "this weight is stored but does nothing" rather than imply
+  // every category is ranked).
+  const [rankedSlugs, setRankedSlugs] = useState<Set<string>>(new Set());
 
   const [loading, setLoading] = useState(false);
   const [saving,  setSaving]  = useState(false);
   const [msg,     setMsg]     = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { loadSettings(); loadOllamaModels(); loadFeeds(); }, []);
+  useEffect(() => { loadSettings(); loadOllamaModels(); loadRankedCategories(); }, []);
+
+  async function loadRankedCategories() {
+    const res = await fetch("/api/ranking/settings");
+    if (!res.ok) return;
+    const data = await res.json();
+    const slugs = (data.settings || [])
+      .filter((s: { ranked: boolean }) => s.ranked)
+      .map((s: { categorySlug: string }) => s.categorySlug);
+    setRankedSlugs(new Set(slugs));
+  }
 
   async function loadSettings() {
     const res = await fetch("/api/settings");
@@ -51,17 +60,6 @@ export default function SettingsPage() {
     } finally { setLoading(false); }
   }
 
-  async function loadFeeds() {
-    const res = await fetch("/api/feeds/weights");
-    if (res.ok) {
-      const data = await res.json();
-      setFeeds(data.feeds || []);
-      const w: Record<number, number> = {};
-      (data.feeds || []).forEach((f: Feed) => { w[f.id] = f.sourceWeight });
-      setFeedWeights(w);
-    }
-  }
-
   async function save() {
     setSaving(true); setMsg(null);
     try {
@@ -80,19 +78,6 @@ export default function SettingsPage() {
     } catch { setMsg({ ok: false, text: "Network error." }); }
     finally { setSaving(false); }
   }
-
-  async function updateFeedWeight(feedId: number, weight: number) {
-    const res = await fetch("/api/feeds/weights", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ feedId, weight }),
-    });
-    if (res.ok) setFeedWeights(w => ({ ...w, [feedId]: weight }));
-  }
-
-  const filteredFeeds = feeds.filter(f =>
-    f.categorySlug && ["finance", "gaming", "sports", "world-news"].includes(f.categorySlug)
-  );
 
   return (
     <div className="settings-page page">
@@ -212,50 +197,9 @@ export default function SettingsPage() {
 
       <SearchLinksManager />
 
-      {/* Feed Rankings */}
-      <div className="settings-section">
-        <div className="settings-section-head">
-          <div className="settings-section-title">Feed Rankings</div>
-          <div className="settings-section-sub">Higher weight → more likely to appear in top articles</div>
-        </div>
-        <div className="settings-body">
-          <button className="tb-btn" onClick={() => setFeedsOpen(o => !o)} style={{ marginBottom: 6 }}>
-            {feedsOpen ? "▲ Hide feeds" : "▼ Show feed weights"}
-          </button>
-          {feedsOpen && (
-            <div style={{ maxHeight: 300, overflowY: "auto" }}>
-              {filteredFeeds.map(f => (
-                <div key={f.id} className="feed-row">
-                  <span className="feed-name">{f.name}</span>
-                  <select
-                    className="feed-select"
-                    /*
-                     * Keys must be the *stringified* weight, not the number.
-                     * React matches <select> values as strings, and String(1.0)
-                     * is "1" while the option's value is "1.0" — so a feed set
-                     * to Normal matched no option and the browser fell back to
-                     * the first one, displaying Low. Picking Normal then
-                     * appeared not to stick.
-                     *
-                     * toFixed(1) normalizes every weight to the same shape the
-                     * options use, so stored values outside the four presets
-                     * fall through to the browser's default rather than
-                     * silently displaying the wrong preset.
-                     */
-                    value={(feedWeights[f.id] ?? 1.0).toFixed(1)}
-                    onChange={e => updateFeedWeight(f.id, parseFloat(e.target.value))}
-                  >
-                    <option value="0.5">Low (0.5×)</option>
-                    <option value="1.0">Normal (1.0×)</option>
-                    <option value="1.5">High (1.5×)</option>
-                    <option value="2.0">Essential (2.0×)</option>
-                  </select>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <FeedRankings rankedSlugs={rankedSlugs} />
+
+      <RankingSettingsPanel onSaved={() => void loadRankedCategories()} />
 
       {/* Save */}
       <button className="settings-save-btn" onClick={save} disabled={saving}>

@@ -93,6 +93,7 @@ from app.routers import (
     ollama,
     podcasts,
     preferences,
+    ranking_settings,
     research,
     search,
     settings as settings_router,
@@ -107,6 +108,7 @@ app.include_router(articles.router, prefix="/api", tags=["articles"])
 app.include_router(feeds.router, prefix="/api", tags=["feeds"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 app.include_router(preferences.router, prefix="/api", tags=["preferences"])
+app.include_router(ranking_settings.router, prefix="/api", tags=["ranking"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(ollama.router, prefix="/api", tags=["ollama"])
 app.include_router(research.router, prefix="/api", tags=["research"])

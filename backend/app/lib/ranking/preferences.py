@@ -10,8 +10,8 @@ import re
 import time
 
 from app.db.repository import (
-    CAPPED_CATEGORIES,
     clear_auto_preferences,
+    get_categories,
     get_preference_keywords,
     get_saved_articles,
     upsert_preference_keyword,
@@ -60,7 +60,13 @@ def rebuild_preferences(category_slug: str | None = None) -> None:
     Manual keywords (source="manual") are preserved — clear_auto_preferences
     only touches source="auto" rows.
     """
-    categories = [category_slug] if category_slug else CAPPED_CATEGORIES
+    if category_slug:
+        categories = [category_slug]
+    else:
+        # spec-v0.5 1.4: every category is scored now, so every category has a
+        # preference profile worth learning. Looping only the v0.4 capped ones
+        # meant technology/security/top-news preferences were never rebuilt.
+        categories = [c.slug for c in get_categories()]
 
     for slug in categories:
         saved = get_saved_articles(limit=500, category_slug=slug)

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.base import Base
-from app.db.models import Category, Feed, PodcastEpisode
+from app.db.models import Category, Feed, PodcastEpisode, RankingSetting
 from app.db.repository.feeds import get_deleted_feed_urls
 from app.db.session import engine, SessionLocal
 
@@ -227,6 +227,29 @@ def _migrate_categories_and_feeds(session: Session) -> None:
     session.commit()
 
 
+def _seed_ranking_settings(session: Session) -> None:
+    """Write a default ranking-settings row for every category (spec-v0.5 5.2).
+
+    INSERT-OR-IGNORE on the unique slug, so this never overwrites a setting the
+    user has changed, and re-running it on every startup is safe.
+
+    ``ranked`` defaults to 1 for the categories that were capped in v0.4 and 0
+    for the rest, so the seeded rows reproduce today's behaviour exactly rather
+    than silently switching ranking on for sections that have never had it
+    (spec-v0.5 5.3).
+    """
+    from app.db.repository.ranking import CAPPED_CATEGORIES
+
+    for name, slug, _order in DEFAULT_CATEGORIES:
+        stmt = (
+            sqlite_insert(RankingSetting)
+            .values(category_slug=slug, ranked=1 if slug in CAPPED_CATEGORIES else 0)
+            .on_conflict_do_nothing(index_elements=["category_slug"])
+        )
+        session.execute(stmt)
+    session.commit()
+
+
 def _normalize_podcast_episode_dates(session: Session) -> None:
     """Backfill: normalize podcast episode ``published_at`` to ISO-8601.
 
@@ -297,7 +320,14 @@ def init_db() -> None:
         # NULL (unmeasured) rather than 0, so "not yet checked" is distinct
         # from "checked and works".
         _add_column_if_missing(session, "feeds", "full_text_blocked", "INTEGER")
+        # Score components behind relevance_score (spec-v0.5 6.1). Additive and
+        # idempotent — existing scores stay, they just have no parts until the
+        # next refresh re-scores them.
+        _add_column_if_missing(session, "articles", "relevance_score_parts", "TEXT")
         session.commit()
+
+    with SessionLocal() as session:
+        _seed_ranking_settings(session)
 
     with SessionLocal() as session:
         init_fts5_search(session)

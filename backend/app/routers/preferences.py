@@ -5,8 +5,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.repository import (
-    CAPPED_CATEGORIES,
     delete_preference_keyword,
+    get_category_by_slug,
     get_preference_keywords,
     upsert_preference_keyword,
 )
@@ -16,7 +16,16 @@ from app.schemas import PreferenceCreateRequestBody, PreferenceRebuildRequestBod
 
 router = APIRouter()
 
-VALID_CATEGORIES = set(CAPPED_CATEGORIES)
+
+def _reject_unknown_category(category: str) -> None:
+    """400 on a category that isn't a real section.
+
+    spec-v0.5 1.4 widened ranking to every category, so this validates against
+    the categories table instead of the v0.4 capped list — which would have
+    rejected a perfectly valid technology preference.
+    """
+    if not get_category_by_slug(category):
+        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
 
 
 @router.get(
@@ -26,11 +35,8 @@ VALID_CATEGORIES = set(CAPPED_CATEGORIES)
 async def list_preferences(category: Optional[str] = Query(None)) -> dict:
     category = category.strip() if category else None
 
-    if category and category not in VALID_CATEGORIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid category. Must be one of: {', '.join(CAPPED_CATEGORIES)}",
-        )
+    if category:
+        _reject_unknown_category(category)
 
     keywords = get_preference_keywords(category)
     return {"keywords": keywords}
@@ -41,11 +47,7 @@ async def list_preferences(category: Optional[str] = Query(None)) -> dict:
     dependencies=[Depends(rate_limit("preferences-post", 60, TEN_MIN_MS))],
 )
 async def create_preference(body: PreferenceCreateRequestBody) -> dict:
-    if body.categorySlug not in VALID_CATEGORIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid category. Must be one of: {', '.join(CAPPED_CATEGORIES)}",
-        )
+    _reject_unknown_category(body.categorySlug)
 
     upsert_preference_keyword(
         body.categorySlug,
@@ -73,11 +75,8 @@ async def delete_preference(id: int = Query(..., gt=0)) -> dict:
 async def rebuild(body: Optional[PreferenceRebuildRequestBody] = None) -> dict:
     category_slug = body.categorySlug if body else None
 
-    if category_slug and category_slug not in VALID_CATEGORIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid category. Must be one of: {', '.join(CAPPED_CATEGORIES)}",
-        )
+    if category_slug:
+        _reject_unknown_category(category_slug)
 
     rebuild_preferences(category_slug)
     return {"success": True}
