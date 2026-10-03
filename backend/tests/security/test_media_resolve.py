@@ -16,6 +16,7 @@ import pytest
 from app.lib.utils import media_resolve
 from app.lib.utils.media_resolve import (
     ShareLinkError,
+    classify_share_link,
     is_known_share_host,
     resolve_share_link,
 )
@@ -39,14 +40,24 @@ REAL_HOST = "example.com"
 class FakeResponse:
     """Minimal stand-in for what `client.stream()` yields.
 
-    Deliberately only exposes the three things the resolver reads: redirect
-    status, Location, and status/content-type. Anything else the real response
-    has is not something the code under test may depend on.
+    Deliberately only exposes what the resolver reads: redirect status,
+    Location, status/content-type, and the framing headers.
     """
 
-    def __init__(self, *, location: str | None = None, status: int = 200, content_type: str = ""):
+    def __init__(
+        self,
+        *,
+        location: str | None = None,
+        status: int = 200,
+        content_type: str = "",
+        headers: dict | None = None,
+    ):
         self.status_code = status
-        self.headers = {"content-type": content_type, **({"location": location} if location else {})}
+        self.headers = {
+            "content-type": content_type,
+            **({"location": location} if location else {}),
+            **(headers or {}),
+        }
 
     @property
     def is_redirect(self) -> bool:
@@ -149,9 +160,16 @@ class TestResolvesToMedia:
 
 class TestRefusesNonVideo:
     def test_a_web_page_is_not_a_video(self, monkeypatch):
+        """The strict resolver still refuses a page — it only returns files.
+
+        Its caller-facing sibling is what the UI uses; see
+        TestClassifyShareLink, where a page is the folder-browser case rather
+        than an error. Keeping both is the point: one asks "is this playable?",
+        the other asks "what is this, and can I show it?".
+        """
         _install(monkeypatch, [FakeResponse(content_type="text/html")])
 
-        with pytest.raises(ShareLinkError, match="web page"):
+        with pytest.raises(ShareLinkError, match="not a playable video"):
             resolve_share_link("https://my.pcloud.com/publink/show?code=XZ")
 
     def test_a_folder_share_is_not_a_video(self, monkeypatch):
@@ -238,71 +256,212 @@ class TestSsrfGate:
         assert resolve_share_link("https://my.pcloud.com/publink/show?code=XZ").url
 
 
+class TestClassifyShareLink:
+    """A folder share is a *page*, not a failure.
+
+    This is the PCloud case: the link opens a window listing the videos, the
+    user picks one, it plays. The UI needs to know that is what it is looking
+    at, and needs to know whether it may be framed — a refused frame renders as
+    a blank box with no error anywhere.
+    """
+
+    def test_a_folder_listing_is_a_page_not_a_refusal(self, monkeypatch):
+        _install(monkeypatch, [FakeResponse(content_type="text/html; charset=utf-8")])
+
+        result = classify_share_link("https://u.pcloud.link/publink/show?code=XZ")
+
+        assert result.kind == "page", result
+        assert result.reason is None
+
+    def test_a_redirected_share_reports_the_url_to_load(self, monkeypatch):
+        """my.pcloud.com 302s to u.pcloud.link; the frame must load *that*."""
+        _install(monkeypatch, [
+            FakeResponse(status=302, location="https://u.pcloud.link/publink/show?code=XZ"),
+            FakeResponse(content_type="text/html"),
+        ])
+
+        result = classify_share_link("https://my.pcloud.com/publink/show?code=XZ")
+
+        assert result.kind == "page"
+        assert result.url == "https://u.pcloud.link/publink/show?code=XZ"
+
+    def test_a_page_with_no_x_frame_options_is_framable(self, monkeypatch):
+        _install(monkeypatch, [FakeResponse(content_type="text/html")])
+
+        assert classify_share_link("https://u.pcloud.link/publink/show?code=XZ").framable is True
+
+    def test_sameorigin_is_not_framable_for_us(self, monkeypatch):
+        """Measured on PCloud's own e.pcloud.link: X-Frame-Options: SAMEORIGIN.
+
+        From a 127.0.0.1 origin that is a refusal, so offering a frame would
+        show an empty box.
+        """
+        _install(monkeypatch, [
+            FakeResponse(content_type="text/html", headers={"x-frame-options": "SAMEORIGIN"})
+        ])
+
+        result = classify_share_link("https://e.pcloud.link/publink/show?code=XZ")
+
+        assert result.kind == "page"
+        assert result.framable is False
+
+    def test_a_csp_frame_ancestors_none_blocks_framing(self, monkeypatch):
+        _install(monkeypatch, [
+            FakeResponse(
+                content_type="text/html",
+                headers={"content-security-policy": "default-src 'self'; frame-ancestors 'none'"},
+            )
+        ])
+
+        assert classify_share_link("https://u.pcloud.link/x").framable is False
+
+    def test_a_csp_frame_ancestors_self_blocks_us(self, monkeypatch):
+        _install(monkeypatch, [
+            FakeResponse(
+                content_type="text/html",
+                headers={"content-security-policy": "frame-ancestors 'self'"},
+            )
+        ])
+
+        assert classify_share_link("https://u.pcloud.link/x").framable is False
+
+    def test_a_csp_frame_ancestors_wildcard_permits_framing(self, monkeypatch):
+        _install(monkeypatch, [
+            FakeResponse(
+                content_type="text/html",
+                headers={"content-security-policy": "frame-ancestors *"},
+            )
+        ])
+
+        assert classify_share_link("https://u.pcloud.link/x").framable is True
+
+    def test_allow_from_is_not_treated_as_permission(self, monkeypatch):
+        """Deprecated and ignored by every current browser.
+
+        Honouring it would put the blank frame straight back.
+        """
+        _install(monkeypatch, [
+            FakeResponse(
+                content_type="text/html",
+                headers={"x-frame-options": "ALLOW-FROM https://example.com"},
+            )
+        ])
+
+        assert classify_share_link("https://u.pcloud.link/x").framable is False
+
+    def test_media_carries_no_framable_verdict(self, monkeypatch):
+        _install(monkeypatch, [FakeResponse(content_type="video/mp4")])
+
+        result = classify_share_link("https://e.pcloud.link/publink/getlink/a.mp4")
+
+        assert result.kind == "media"
+        assert result.framable is None, "a file is played, not framed"
+
+    def test_a_json_api_is_still_a_refusal(self, monkeypatch):
+        _install(monkeypatch, [FakeResponse(content_type="application/json")])
+
+        result = classify_share_link("https://my.pcloud.com/publink/show?code=XZ")
+
+        assert result.kind == "refused"
+        assert "not a video" in result.reason
+
+    def test_an_error_page_is_refused_with_its_status(self, monkeypatch):
+        _install(monkeypatch, [FakeResponse(status=404, content_type="text/html")])
+
+        result = classify_share_link("https://u.pcloud.link/publink/show?code=GONE")
+
+        assert result.kind == "refused"
+        assert "404" in result.reason
+
+    def test_a_private_hop_is_refused_rather_than_classified(self, monkeypatch):
+        _install(monkeypatch, [
+            FakeResponse(status=302, location="http://127.0.0.1/admin"),
+        ])
+
+        with pytest.raises(ShareLinkError):
+            classify_share_link("https://my.pcloud.com/publink/show?code=XZ")
+
+
 class TestRoute:
-    def test_video_link_is_redirected_to(self, client):
+    """The route answers JSON, never a bare 404 or a silent 307.
+
+    A 307 handed to `<video src>` fails invisibly — a dead player with nothing
+    in any log. The response has to carry the reason so the UI can offer a real
+    alternative instead of showing nothing useful.
+    """
+
+    def _fake_httpx(self, content_type):
+        return type(
+            "H",
+            (),
+            {
+                "Client": lambda **_kw: type(
+                    "C",
+                    (),
+                    {
+                        "__enter__": lambda s: s,
+                        "__exit__": lambda s, *e: False,
+                        "stream": lambda s, _m, url, **_k: FakeResponse(
+                            content_type=content_type
+                        ),
+                    },
+                )(),
+            },
+        )
+
+    def test_a_playable_share_reports_its_url(self, client, monkeypatch):
         import app.lib.utils.media_resolve as mr
 
-        _install_tests = mr.httpx
-        try:
-            fake = type(
-                "H",
-                (),
-                {
-                    "Client": lambda **_kw: type(
-                        "C",
-                        (),
-                        {
-                            "__enter__": lambda s: s,
-                            "__exit__": lambda s, *e: False,
-                            "stream": lambda s, _m, url, **_k: FakeResponse(
-                                content_type="video/mp4"
-                            ),
-                        },
-                    )(),
-                },
-            )
-            mr.httpx = fake
-            res = client.get(
-                "/api/videos/direct",
-                params={"url": "https://my.pcloud.com/publink/show?code=XZ"},
-                follow_redirects=False,
-            )
-            assert res.status_code == 307, res.text
-            assert res.headers["location"] == "https://my.pcloud.com/publink/show?code=XZ"
-        finally:
-            mr.httpx = _install_tests
+        monkeypatch.setattr(mr, "httpx", self._fake_httpx("video/mp4"))
 
-    def test_a_web_page_share_is_404_with_a_reason(self, client):
+        body = client.get(
+            "/api/videos/resolve",
+            params={"url": "https://my.pcloud.com/publink/show?code=XZ"},
+        ).json()
+
+        assert body["kind"] == "media"
+        assert body["playable"] is True
+        assert body["contentType"] == "video/mp4"
+        assert body["reason"] is None
+
+    def test_a_folder_share_reports_kind_page_and_framability(self, client, monkeypatch):
+        """The UI branches on exactly these two fields."""
         import app.lib.utils.media_resolve as mr
 
-        original = mr.httpx
-        try:
-            mr.httpx = type(
-                "H",
-                (),
-                {
-                    "Client": lambda **_kw: type(
-                        "C",
-                        (),
-                        {
-                            "__enter__": lambda s: s,
-                            "__exit__": lambda s, *e: False,
-                            "stream": lambda s, _m, url, **_k: FakeResponse(
-                                content_type="text/html"
-                            ),
-                        },
-                    )(),
-                },
-            )
-            res = client.get(
-                "/api/videos/direct",
-                params={"url": "https://my.pcloud.com/publink/show?code=XZ"},
-            )
-            assert res.status_code == 404
-            assert "web page" in res.json()["detail"]
-        finally:
-            mr.httpx = original
+        monkeypatch.setattr(mr, "httpx", self._fake_httpx("text/html"))
 
-    def test_a_private_address_share_is_404(self, client):
-        res = client.get("/api/videos/direct", params={"url": "http://127.0.0.1/v.mp4"})
-        assert res.status_code == 404
+        body = client.get(
+            "/api/videos/resolve",
+            params={"url": "https://u.pcloud.link/publink/show?code=XZ"},
+        ).json()
+
+        assert body["kind"] == "page"
+        assert body["playable"] is False, "a page is browsed, not played"
+        assert body["framable"] is True
+        assert body["url"]
+
+    def test_a_folder_share_is_200_with_a_kind_not_a_404(self, client, monkeypatch):
+        """A folder share is a normal outcome, not a server error."""
+        import app.lib.utils.media_resolve as mr
+
+        monkeypatch.setattr(mr, "httpx", self._fake_httpx("application/json"))
+
+        res = client.get(
+            "/api/videos/resolve",
+            params={"url": "https://my.pcloud.com/publink/show?code=XZ"},
+        )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["kind"] == "refused"
+        assert body["playable"] is False
+        assert "not a video" in body["reason"]
+
+    def test_a_private_address_is_refused_with_a_reason(self, client):
+        body = client.get(
+            "/api/videos/resolve", params={"url": "http://127.0.0.1/v.mp4"}
+        ).json()
+
+        assert body["playable"] is False
+        assert body["kind"] == "refused"
+        assert body["reason"]
