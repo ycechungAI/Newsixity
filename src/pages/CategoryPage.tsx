@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import type { Article, Category } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
+import SortToggle, { type SortMode } from "@/components/ui/SortToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
 import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
@@ -50,6 +51,9 @@ function CategoryPageInner({ slug }: { slug: string }) {
 
   const [category, setCategory] = useState<CategoryWithCounts | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultView(slug));
+  // spec-v0.5 1.2: relevance is the server default; this makes the order
+  // visible and switchable per view rather than hidden in a constant.
+  const [sort, setSort] = useState<SortMode>("relevance");
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -88,7 +92,7 @@ function CategoryPageInner({ slug }: { slug: string }) {
   useEffect(() => {
     let cancelled = false;
     const offset = (currentPage - 1) * perPage;
-    fetch(`/api/articles?category=${encodeURIComponent(slug)}&limit=${perPage}&offset=${offset}`)
+    fetch(`/api/articles?category=${encodeURIComponent(slug)}&sort=${sort}&limit=${perPage}&offset=${offset}`)
       .then((r) => r.json())
       .then((arts: Article[]) => {
         if (cancelled) return;
@@ -97,7 +101,7 @@ function CategoryPageInner({ slug }: { slug: string }) {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [slug, currentPage, perPage, refreshTick]);
+  }, [slug, currentPage, perPage, sort, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil((category?.total ?? 0) / perPage));
   const unreadCount = category?.unread ?? 0;
@@ -118,7 +122,13 @@ function CategoryPageInner({ slug }: { slug: string }) {
 
       <CategorySearchBox slug={slug} name={categoryName} />
 
-      <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+      <div className="toolbar-row">
+        <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+        <SortToggle
+          value={sort}
+          onChange={(next) => { setSort(next); setCurrentPage(1); }}
+        />
+      </div>
 
       {!loading && (category?.total ?? 0) === 0 ? (
         <EmptyState

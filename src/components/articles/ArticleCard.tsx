@@ -9,6 +9,7 @@ import { isVideoUrl } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import { enqueueMarkRead } from "@/lib/articles/markReadQueue";
 import VideoEmbed from "./VideoEmbed";
+import ScoreExplainer from "./ScoreExplainer";
 import Highlight from "@/components/ui/Highlight";
 import { confirmDialog, notify } from "@/lib/ui/dialog";
 
@@ -192,7 +193,10 @@ export default function ArticleCard({ article, autoMarkRead = true, cardView = f
         <Link to={`/article/${article.id}`} className="article-title">
           {article.title}
         </Link>
-        <div className="article-meta">{meta}</div>
+        <div className="article-meta">
+          {meta}
+          <ScoreExplainer score={article.relevanceScore} parts={article.relevanceScoreParts} />
+        </div>
         {article.highlight ? (
           <div className="article-preview"><Highlight snippet={article.highlight} /></div>
         ) : (

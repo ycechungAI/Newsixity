@@ -4,6 +4,7 @@ import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar
 import Pagination from "@/components/ui/Pagination";
 import EmptyState from "@/components/ui/EmptyState";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
+import SortToggle, { type SortMode } from "@/components/ui/SortToggle";
 
 type ViewMode = "topics" | "cards" | "compact" | "sources" | "timeline" | "list";
 
@@ -38,6 +39,7 @@ export default function FinanceNewsPage() {
   const [total, setTotal] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("topics");
+  const [sort, setSort] = useState<SortMode>("relevance");
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -71,7 +73,7 @@ export default function FinanceNewsPage() {
   useEffect(() => {
     let cancelled = false;
     const offset = (currentPage - 1) * perPage;
-    fetch(`/api/articles?category=finance&limit=${perPage}&offset=${offset}`)
+    fetch(`/api/articles?category=finance&sort=${sort}&limit=${perPage}&offset=${offset}`)
       .then((r) => r.json())
       .then((data: Article[]) => {
         if (cancelled) return;
@@ -80,7 +82,7 @@ export default function FinanceNewsPage() {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [currentPage, perPage, refreshTick]);
+  }, [currentPage, perPage, sort, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
@@ -93,7 +95,10 @@ export default function FinanceNewsPage() {
         </div>
       </div>
 
-      <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+      <div className="toolbar-row">
+        <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+        <SortToggle value={sort} onChange={(next) => { setSort(next); setCurrentPage(1); }} />
+      </div>
 
       {!loading && total === 0 ? (
         <EmptyState

@@ -37,6 +37,9 @@ export interface Article {
   fetchedAt: string;
   relevanceScore: number;
   isPromoted: boolean;
+  /** The five score components behind relevanceScore (spec-v0.5 6.2). Absent
+   * for an article scored before parts were recorded. */
+  relevanceScoreParts?: Record<string, number> | null;
   /** Search results only: snippet with <mark> around matched terms. */
   highlight?: string | null;
 }

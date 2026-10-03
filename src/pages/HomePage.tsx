@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, useSearchParams } from "react-router";
 import type { Article, Category } from "@/types";
 import ViewModeToggle from "@/components/ui/ViewModeToggle";
+import SortToggle, { type SortMode } from "@/components/ui/SortToggle";
 import ArticleListWithToolbar from "@/components/articles/ArticleListWithToolbar";
 import Pagination from "@/components/ui/Pagination";
 
@@ -40,6 +41,9 @@ export default function HomePage() {
   const [totalArticles, setTotalArticles] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("topics");
+  // spec-v0.5 1.2 — relevance is the server default; the order itself is a
+  // per-view choice, so it sits in the list header rather than in Settings.
+  const [sort, setSort] = useState<SortMode>("relevance");
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -77,7 +81,7 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false;
     const offset = (currentPage - 1) * perPage;
-    fetch(`/api/articles?limit=${perPage}&offset=${offset}`)
+    fetch(`/api/articles?sort=${sort}&limit=${perPage}&offset=${offset}`)
       .then((r) => r.json())
       .then((data: Article[]) => {
         if (cancelled) return;
@@ -86,7 +90,7 @@ export default function HomePage() {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [currentPage, perPage, refreshTick]);
+  }, [currentPage, perPage, sort, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil(totalArticles / perPage));
 
@@ -104,7 +108,10 @@ export default function HomePage() {
         </div>
       </div>
 
-      <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+      <div className="toolbar-row">
+        <ViewModeToggle viewMode={viewMode} onChange={handleViewModeChange} />
+        <SortToggle value={sort} onChange={(next) => { setSort(next); setCurrentPage(1); }} />
+      </div>
 
       {!loading && totalArticles === 0 ? (
         <div className="empty">
