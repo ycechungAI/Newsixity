@@ -48,6 +48,7 @@ def get_articles_by_category(
     promoted_only: bool = False,
     saved_only: bool = False,
     exclude_saved: bool = False,
+    sort: str = "relevance",
 ) -> list[Article]:
     """Get articles by category with optional filtering.
 
@@ -55,6 +56,13 @@ def get_articles_by_category(
     keyword filter if slug == "sports". ``exclude_saved`` hides saved/favourited
     articles (used by the non-Saved views, which only show unsaved articles —
     saved articles live exclusively in the Saved tab).
+
+    ``sort``: ``"relevance"`` (default — scored articles first by
+    ``relevance_score``, ties and the unscored tail by recency; so a newly
+    inserted article is never stranded at the bottom), ``"recent"``
+    (``published_at DESC``, today's behaviour), ``"source"`` (by feed name,
+    then recency). Unknown values fall back to ``recent`` rather than
+    erroring, so a stale client does not 500.
     """
     with SessionLocal() as db:
         query = (
@@ -93,8 +101,25 @@ def get_articles_by_category(
         if conditions:
             query = query.where(and_(*conditions))
 
+        if sort == "relevance":
+            order = [
+                ArticleModel.is_read,
+                ArticleModel.relevance_score.desc().nullslast(),
+                ArticleModel.published_at.desc(),
+            ]
+        elif sort == "source":
+            order = [
+                ArticleModel.is_read,
+                FeedModel.name.asc(),
+                ArticleModel.published_at.desc(),
+            ]
+        else:
+            # "recent", and the graceful fallback for an unknown sort value:
+            # a stale client must never get a 500 for a bad param.
+            order = [ArticleModel.is_read, ArticleModel.published_at.desc()]
+
         rows = db.execute(
-            query.order_by(ArticleModel.is_read, ArticleModel.published_at.desc())
+            query.order_by(*order)
             .limit(limit)
             .offset(offset)
         ).all()

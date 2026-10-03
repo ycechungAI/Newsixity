@@ -188,10 +188,22 @@ async def list_articles(
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     saved: bool = Query(False),
+    sort: str = Query(
+        "relevance",
+        description=(
+            '"relevance" (default — score, then recency), '
+            '"recent", or "source". Unknown values fall back to "recent".'
+        ),
+    ),
 ) -> list[Article]:
     """List articles with optional category, saved, and pagination filters."""
     return get_articles_by_category(
-        category, limit=limit, offset=offset, saved_only=saved, exclude_saved=not saved
+        category,
+        limit=limit,
+        offset=offset,
+        saved_only=saved,
+        exclude_saved=not saved,
+        sort=sort,
     )
 
 
