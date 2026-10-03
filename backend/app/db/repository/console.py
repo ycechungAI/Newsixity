@@ -19,7 +19,12 @@ from app.db.models import Category as CategoryModel
 from app.db.models import Feed as FeedModel
 from app.db.repository.helpers import Article, map_article_row
 from app.db.session import SessionLocal, reclaim_space
-from app.lib.utils.sanitize import strip_html
+from app.lib.utils.sanitize import (
+    MAX_AUTHOR_LENGTH,
+    MAX_CONTENT_LENGTH,
+    MAX_TITLE_LENGTH,
+    strip_html,
+)
 from app.lib.utils.url import parse_http_url
 
 CULL_UNSUMMARIZED_AGE_MONTHS = 6
@@ -220,6 +225,26 @@ def get_category_articles_count_in_last_24h(category_slug: str) -> int:
         ).scalar() or 0
 
 
+def get_feed_article_count_in_last_24h(feed_id: int) -> int:
+    """Articles one feed has stored in the rolling 24h window.
+
+    The per-feed counterpart to get_category_articles_count_in_last_24h, which
+    the per-feed insert caps depend on. Same window and same `fetched_at`
+    column, so the two agree on what "the last day" means.
+
+    One query per feed per refresh is acceptable: feeds number in the tens and
+    the refresh already fetches every feed over the network.
+    """
+    with SessionLocal() as db:
+        return db.execute(
+            select(func.count(ArticleModel.id))
+            .where(
+                ArticleModel.feed_id == feed_id,
+                ArticleModel.fetched_at >= func.datetime("now", "-1 day"),
+            )
+        ).scalar() or 0
+
+
 def get_manual_links_feed_id() -> int | None:
     with SessionLocal() as db:
         return db.execute(
@@ -248,9 +273,11 @@ def create_manual_article(
         raise ValueError("Manual links must use http/https URLs")
 
     safe_image_url = parse_http_url(image_url)
-    safe_title = strip_html(title)[:500]
-    safe_author = strip_html(author)[:200] if author else "Manual Entry"
-    safe_content = strip_html(content)[:8000] if content else None
+    safe_title = strip_html(title)[:MAX_TITLE_LENGTH]
+    safe_author = (
+        strip_html(author)[:MAX_AUTHOR_LENGTH] if author else "Manual Entry"
+    )
+    safe_content = strip_html(content)[:MAX_CONTENT_LENGTH] if content else None
 
     url_hash = hashlib.sha256(safe_url.encode("utf-8")).hexdigest()
     guid = f"manual-{url_hash[:32]}"
@@ -311,9 +338,11 @@ def create_articles_from_search_results(
             if not safe_url:
                 continue
 
-            safe_title = strip_html(result["title"])[:500]
+            safe_title = strip_html(result["title"])[:MAX_TITLE_LENGTH]
             description = result.get("description")
-            safe_description = strip_html(description)[:8000] if description else None
+            safe_description = (
+                strip_html(description)[:MAX_CONTENT_LENGTH] if description else None
+            )
 
             # Derived from the result's own URL (not its list position) so
             # re-running the same search doesn't collide with a different

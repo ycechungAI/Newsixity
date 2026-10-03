@@ -27,6 +27,7 @@ from app.db.repository import (
     get_summarization_queue_count,
     remove_article_from_queue,
     reset_failed_and_skipped_articles,
+    set_feed_full_text_blocked,
     MAX_UNSUMMARIZED_QUEUE,
 )
 from app.lib.backup.restore import (
@@ -42,6 +43,7 @@ from app.lib.backup.restore import (
 )
 from app.lib.logger.console import get_logs
 from app.lib.server.rate_limit import ONE_HOUR_MS, TEN_MIN_MS, rate_limit
+from app.lib.services.backfill import MAX_CONCURRENCY
 
 logger = logging.getLogger("newsixity")
 
@@ -190,6 +192,122 @@ async def resummarize_failed() -> dict:
         "count": result["count"],
         "message": f"Reset {result['count']} failed/skipped/timed-out articles for resummarization. They will appear in the queue.",
     }
+
+
+@router.get(
+    "/console/full-text-status",
+    dependencies=[Depends(rate_limit("console-full-text-status", 60, TEN_MIN_MS))],
+)
+async def full_text_status() -> dict:
+    """How many articles still hold teaser-length text.
+
+    The count is a single aggregate; the sample is a handful of rows for the
+    Console to preview. Deliberately not the whole pending set — loading 600+
+    rows just to render a number was duplicated effort.
+    """
+    from app.db.repository import (
+        count_articles_needing_full_text,
+        get_articles_needing_full_text,
+        get_feeds_unable_to_serve_text,
+    )
+    from app.lib.services.article_text import TEASER_MAX_LENGTH
+
+    pending = await asyncio.to_thread(
+        count_articles_needing_full_text, TEASER_MAX_LENGTH
+    )
+    sample = await asyncio.to_thread(
+        get_articles_needing_full_text, TEASER_MAX_LENGTH, 10
+    )
+    return {
+        "pending": pending,
+        "threshold": TEASER_MAX_LENGTH,
+        "sample": [
+            {"id": a.id, "title": a.title[:80], "feed": a.feed_name,
+             "length": len(a.content or "")}
+            for a in sample
+        ],
+        "blockedFeeds": await asyncio.to_thread(get_feeds_unable_to_serve_text),
+    }
+
+
+@router.post("/console/full-text-unblock")
+async def full_text_unblock(feed_id: int = Query(...)) -> dict:
+    """Clear a feed's "can't serve text" mark so it's tried again.
+
+    Blocking is measured, not permanent — a publisher may lift a paywall or a
+    bot block, and a stale flag would silently exclude a working source.
+    """
+    await asyncio.to_thread(set_feed_full_text_blocked, feed_id, None)
+    return {"success": True, "feedId": feed_id}
+
+
+@router.post("/console/backfill-full-text")
+async def backfill_full_text_endpoint(
+    concurrency: int = Query(
+        0, ge=0, le=MAX_CONCURRENCY,
+        description="Articles to fetch at once; 0 uses the detected default",
+    ),
+) -> dict:
+    """Start a full-text backfill in the background.
+
+    Runs as a job rather than blocking: the original design fetched one bounded
+    batch per request, which meant repairing ~600 articles meant clicking a
+    button 60 times. Poll ``/console/backfill-full-text/status`` for progress
+    and POST the same path with ``cancel=true`` to stop it.
+    """
+    from app.lib.services.backfill import (
+        DEFAULT_CONCURRENCY,
+        get_active_job,
+        start_job,
+    )
+
+    # One run at a time — a second would duplicate every fetch.
+    existing = get_active_job()
+    if existing is not None and existing.running:
+        return {"success": False, "message": "Already running", **existing.snapshot()}
+
+    job, error = start_job(concurrency or DEFAULT_CONCURRENCY)
+    if error:
+        return {"success": False, "message": error}
+
+    return {"success": True, **job.snapshot()}
+
+
+@router.get("/console/backfill-full-text/status")
+async def backfill_full_text_status() -> dict:
+    """Progress for the running (or last finished) backfill."""
+    from app.lib.services.backfill import (
+        DEFAULT_CONCURRENCY,
+        default_concurrency,
+        get_active_job,
+    )
+
+    job = get_active_job()
+    if job is None:
+        return {
+            "running": False,
+            "processed": 0,
+            "repaired": 0,
+            "total": 0,
+            "percent": 0,
+            "concurrency": DEFAULT_CONCURRENCY,
+            "suggestedConcurrency": default_concurrency(),
+            "maxConcurrency": MAX_CONCURRENCY,
+        }
+    return {**job.snapshot(), "suggestedConcurrency": default_concurrency(),
+            "maxConcurrency": MAX_CONCURRENCY}
+
+
+@router.post("/console/backfill-full-text/cancel")
+async def backfill_full_text_cancel() -> dict:
+    """Ask a running backfill to stop. Takes effect at the next batch boundary."""
+    from app.lib.services.backfill import get_active_job
+
+    job = get_active_job()
+    if job is None or not job.running:
+        return {"success": False, "message": "Nothing is running"}
+    job.cancel()
+    return {"success": True, "message": "Stopping after the current batch", **job.snapshot()}
 
 
 @router.post(

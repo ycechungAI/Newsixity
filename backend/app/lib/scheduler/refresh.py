@@ -21,10 +21,9 @@ from app.db.repository import (
     get_article_by_title_hash,
     get_articles_by_category,
     get_articles_by_ids,
-    get_category_articles_count_in_last_24h,
+    get_feed_article_count_in_last_24h,
     get_feed_category_slug,
     upsert_article,
-    CATEGORY_DAILY_INSERT_CAP,
 )
 from app.db.repository.helpers import Article
 from app.lib.dedup.grouping import group_articles
@@ -35,6 +34,13 @@ from app.lib.rss.feeds import seed_all_feeds, DEFAULT_FEEDS
 from app.lib.scheduler.summarizer import background_summarize
 
 logger = logging.getLogger("newsixity")
+
+# Per-feed daily insert caps (spec-v0.5 2.2). These replace the per-section
+# CATEGORY_DAILY_INSERT_CAP, which was first-come-first-served: the first feed
+# processed drained the whole section budget and every other feed was silently
+# skipped for the rest of the 24h window.
+FEED_DAILY_SOFT_CAP = 5
+FEED_DAILY_HARD_CAP = 8
 
 
 @dataclass(frozen=True)
@@ -90,10 +96,13 @@ def _run_feed_refresh_sync(
     refreshed = 0
     new_articles = 0
     errors: list[str] = []
-    count_start_by_category: dict[str, int] = {}
+    inserted_this_session_by_feed: dict[int, int] = {}
     inserted_this_session_by_category: dict[str, int] = {}
     new_articles_by_category: dict[str, list[int]] = {}
     existing_articles_by_category: dict[str, list[Article]] = {}
+    # feed_id -> which limit stopped it ("soft" / "hard"), so a refresh can
+    # report a silenced feed instead of looking identical to a quiet one.
+    capped_feeds: dict[int, str] = {}
 
     # Bucket usable feeds by category.
     #
@@ -128,41 +137,44 @@ def _run_feed_refresh_sync(
             category_slug, limit=200
         )
 
-        # Seed the cap from what's already been stored in the last 24h.
-        count_start_by_category[category_slug] = (
-            get_category_articles_count_in_last_24h(category_slug)
-        )
+        # Per-feed starting positions in the rolling 24h window, plus the
+        # section-wide fairness floor (spec-v0.5 2.3 / 2.4).
+        #
+        # `section_covered` is evaluated ONCE, before any insert. Computing it
+        # live would let a feed that inserts its own 5th article raise the
+        # floor mid-pass and starve feeds that had not yet had a turn.
+        start_by_feed: dict[int, int] = {
+            fr.feed_id: get_feed_article_count_in_last_24h(fr.feed_id)
+            for fr in category_feeds
+        }
+        section_covered = all(v >= FEED_DAILY_SOFT_CAP for v in start_by_feed.values())
 
-        # `category_slug` is bound as a default argument rather than closed over.
-        # It is only ever called within this loop iteration today, so the
-        # closure would work either way — but a bare closure over a loop
-        # variable is the kind of thing that silently reads the *last* value
-        # the moment someone moves a call outside the loop.
-        def _cap_reached(
-            slug: str = category_slug,
-            start: int = count_start_by_category[category_slug],
-        ) -> bool:
-            return start + inserted_this_session_by_category.get(slug, 0) >= CATEGORY_DAILY_INSERT_CAP
-
-        # Round-robin: each pass offers every feed in the category one
-        # article, then moves to the next pass. A feed with a hundred entries
-        # therefore can't outrank a feed with five.
+        # Round-robin: each pass offers every feed in the section one article,
+        # then moves to the next pass, so a feed with a hundred entries cannot
+        # outrank one with five.
         cursors = {i: 0 for i in range(len(category_feeds))}
         exhausted = False
 
-        while not exhausted and not _cap_reached():
+        while not exhausted:
             exhausted = True
 
             for index, feed_result in enumerate(category_feeds):
-                if _cap_reached():
-                    break
-
                 articles = feed_result.articles
                 cursor = cursors[index]
+                start = start_by_feed[feed_result.feed_id]
+                inserted_here = inserted_this_session_by_feed.get(feed_result.feed_id, 0)
 
-                # Take exactly one article this pass; duplicates and
-                # re-entries keep advancing the cursor without spending cap.
-                while cursor < len(articles) and not _cap_reached():
+                # Take exactly one article this pass; duplicates and re-entries
+                # advance the cursor without spending allowance (2.6).
+                while cursor < len(articles):
+                    # Hard cap, always enforced.
+                    if start + inserted_here >= FEED_DAILY_HARD_CAP:
+                        break
+                    # Soft cap, gated on the whole section having met its floor.
+                    # A feed still below the soft cap is always free to insert.
+                    if start + inserted_here >= FEED_DAILY_SOFT_CAP and not section_covered:
+                        break
+
                     parsed = articles[cursor]
                     cursor += 1
 
@@ -181,7 +193,7 @@ def _run_feed_refresh_sync(
                         continue
 
                     # A feed the user deleted after this refresh started fails
-                    # its FK here — skip that feed, don't abort the run.
+                    # its FK here - skip that feed, don't abort the run.
                     try:
                         inserted_id = upsert_article(
                             feed_result.feed_id, asdict(parsed), title_hash
@@ -192,6 +204,8 @@ def _run_feed_refresh_sync(
 
                     if inserted_id:
                         new_articles += 1
+                        inserted_here += 1
+                        inserted_this_session_by_feed[feed_result.feed_id] = inserted_here
                         inserted_this_session_by_category[category_slug] = (
                             inserted_this_session_by_category.get(category_slug, 0) + 1
                         )
@@ -199,17 +213,31 @@ def _run_feed_refresh_sync(
                             inserted_id
                         )
                         # Newly inserted titles join the fuzzy-dedup pool so two
-                        # feeds carrying the same story don't both land. Only
-                        # .title is read from these, so a light record is enough.
-                        existing_articles.append(
-                            _TitleOnly(title=parsed.title)
-                        )
+                        # feeds carrying one story don't both land. Only .title
+                        # is read from these, so a light record is enough.
+                        existing_articles.append(_TitleOnly(title=parsed.title))
 
                     break  # one article per feed per pass
 
                 cursors[index] = cursor
-                if cursor < len(articles):
+                # A feed blocked by a cap still has unread entries, but it is
+                # not "work left to do" this pass - otherwise `exhausted` never
+                # flips and the outer loop spins forever.
+                blocked = (
+                    start + inserted_here >= FEED_DAILY_HARD_CAP
+                    or (start + inserted_here >= FEED_DAILY_SOFT_CAP and not section_covered)
+                )
+                if cursor < len(articles) and not blocked:
                     exhausted = False
+
+                # 2.8: record a feed that stopped on a cap rather than running
+                # dry, so "silenced" is distinguishable from "nothing new".
+                if articles and blocked:
+                    capped_feeds[feed_result.feed_id] = (
+                        "hard"
+                        if start + inserted_here >= FEED_DAILY_HARD_CAP
+                        else "soft"
+                    )
 
     # Group new articles by category.
     for slug, article_ids in new_articles_by_category.items():

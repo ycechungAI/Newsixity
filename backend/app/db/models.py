@@ -61,6 +61,16 @@ class Feed(Base):
         Float, nullable=False, server_default=text("1.0")
     )
 
+    # Set when a source consistently refuses to serve article text (paywalled,
+    # or bot-blocked like Politico and NPR, which 403 every request). Measured
+    # on this install: a full backfill pass over 900 articles repaired 3.
+    #
+    # Once flagged, the feed is excluded from the full-text backfill entirely,
+    # so the pending count reflects work that can actually succeed instead of
+    # counting articles that will never be repairable. NULL means "not measured
+    # yet" — absence of evidence, not a verdict.
+    full_text_blocked: Mapped[int | None] = mapped_column(Integer)
+
     __table_args__ = (
         Index("idx_feeds_category_id", "category_id"),
         {"sqlite_autoincrement": True},

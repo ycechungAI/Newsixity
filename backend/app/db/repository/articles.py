@@ -26,7 +26,12 @@ from app.db.repository.helpers import (
     map_article_row,
 )
 from app.db.session import SessionLocal, reclaim_space
-from app.lib.utils.sanitize import strip_html
+from app.lib.utils.sanitize import (
+    MAX_AUTHOR_LENGTH,
+    MAX_CONTENT_LENGTH,
+    MAX_TITLE_LENGTH,
+    strip_html,
+)
 from app.lib.utils.url import parse_http_url
 
 # Matches "word" runs (unicode-aware, so non-ASCII terms still work). Used to
@@ -492,11 +497,15 @@ def upsert_article(
         return None
 
     safe_image_url = parse_http_url(article.get("image_url"))
-    safe_title = strip_html(article["title"])[:500]
+    safe_title = strip_html(article["title"])[:MAX_TITLE_LENGTH]
     raw_author = article.get("author")
-    safe_author = strip_html(raw_author)[:200] if raw_author else None
+    safe_author = (
+        strip_html(raw_author)[:MAX_AUTHOR_LENGTH] if raw_author else None
+    )
     raw_content = article.get("content")
-    safe_content = strip_html(raw_content)[:8000] if raw_content else None
+    safe_content = (
+        strip_html(raw_content)[:MAX_CONTENT_LENGTH] if raw_content else None
+    )
 
     with SessionLocal() as db:
         stmt = (
@@ -546,8 +555,13 @@ def update_article_summary(article_id: int, summary: str, model: str) -> None:
 
 
 def update_article_content(article_id: int, content: str) -> None:
-    """Update an article's content (HTML-stripped, matching queries.ts)."""
-    safe_content = strip_html(content)[:8000] if content else None
+    """Update an article's content (HTML-stripped, matching queries.ts).
+
+    This is the path the summarizer uses when it scrapes the original page, so
+    it must honour the same MAX_CONTENT_LENGTH as the insert path — otherwise a
+    long scraped article is truncated harder than the same text from a feed.
+    """
+    safe_content = strip_html(content)[:MAX_CONTENT_LENGTH] if content else None
     with SessionLocal() as db:
         db.execute(
             update(ArticleModel)
@@ -798,6 +812,143 @@ def get_recent_unsummarized_articles(
             })
             for row in rows
         ]
+
+
+def get_articles_needing_full_text(
+    max_length: int,
+    limit: int = 50,
+) -> list[Article]:
+    """Articles whose stored text is too short to be a real article body.
+
+    Deliberately ignores summary state. The summarization queue only visits
+    *unsummarized* articles, so anything summarized before full-text fetching
+    existed kept its teaser forever — measured at 622 of 712 already-summarized
+    articles on this install. This query is what the backfill walks instead.
+
+    Ordered saved-first, then newest, so the articles a user actually kept get
+    repaired before the rest.
+    """
+    with SessionLocal() as db:
+        # Every article below the threshold is pending. A "does this feed run
+        # long?" filter was tried here and removed: it excluded precisely the
+        # feeds that most need scraping, because a feed whose articles are all
+        # still teasers has a short average and a short maximum — BBC Sport at
+        # 145 chars and Al Jazeera at 109 would never have been attempted at all.
+        #
+        # The re-attempt problem this filter was meant to solve (a repaired but
+        # still-short article being offered forever) is handled by the run
+        # itself: it stops when a batch comes back with no progress, rather
+        # than by hiding articles from the query.
+        rows = db.execute(
+            select(
+                ArticleModel,
+                FeedModel.name.label("feed_name"),
+                CategoryModel.slug.label("category_slug"),
+            )
+            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+            .join(CategoryModel, FeedModel.category_id == CategoryModel.id)
+            .where(
+                or_(
+                    ArticleModel.content.is_(None),
+                    func.length(ArticleModel.content) < max_length,
+                ),
+                ArticleModel.link.isnot(None),
+                ArticleModel.link != "",
+                # Manual Links are user-curated pages, not feed articles.
+                FeedModel.name != "Manual Links",
+                # Sources measured as refusing to serve text (paywalled or
+                # bot-blocked). Excluded so the pending count reflects work
+                # that can succeed. NULL means unmeasured, and is NOT excluded.
+                FeedModel.full_text_blocked.isnot(True),
+                # Video links have no article body to extract. They were the
+                # worst offenders: all 6 saved articles were YouTube videos, so
+                # the `is_saved DESC` ordering put six permanently-unfixable
+                # rows at the head of every batch, and a run ground through them
+                # before reaching anything repairable.
+                and_(
+                    ~ArticleModel.link.like("%youtube.com/watch%"),
+                    ~ArticleModel.link.like("%youtu.be/%"),
+                    ~ArticleModel.link.like("%vimeo.com/%"),
+                    ~ArticleModel.link.like("%dailymotion.com/%"),
+                    ~ArticleModel.link.like("%odysee.com/%"),
+                    ~ArticleModel.link.like("%/videos/%"),
+                    ~ArticleModel.link.like("%/video/%"),
+                ),
+            )
+            # Longest-gap first: the articles furthest from having real text are
+            # the ones worth the fetch. Saved articles used to lead here, which
+            # front-loaded unfixable rows.
+            .order_by(ArticleModel.fetched_at.desc())
+            .limit(limit)
+        ).all()
+
+        return [
+            map_article_row({
+                **row[0].__dict__,
+                "feed_name": row[1],
+                "category_slug": row[2],
+            })
+            for row in rows
+        ]
+
+
+def count_articles_needing_full_text(max_length: int = 1500) -> int:
+    """How many articles would :func:`get_articles_needing_full_text` offer.
+
+    Same predicate, one aggregate, so the backfill can size a progress bar
+    without loading rows it may never fetch.
+    """
+    with SessionLocal() as db:
+        return db.execute(
+            select(func.count(ArticleModel.id))
+            .select_from(ArticleModel)
+            .join(FeedModel, ArticleModel.feed_id == FeedModel.id)
+            .where(
+                or_(
+                    ArticleModel.content.is_(None),
+                    func.length(ArticleModel.content) < max_length,
+                ),
+                ArticleModel.link.isnot(None),
+                ArticleModel.link != "",
+                FeedModel.name != "Manual Links",
+                # Keep in step with get_articles_needing_full_text, or the
+                # progress bar's denominator includes rows the run will never
+                # be offered.
+                FeedModel.full_text_blocked.isnot(True),
+                and_(
+                    ~ArticleModel.link.like("%youtube.com/watch%"),
+                    ~ArticleModel.link.like("%youtu.be/%"),
+                    ~ArticleModel.link.like("%vimeo.com/%"),
+                    ~ArticleModel.link.like("%dailymotion.com/%"),
+                    ~ArticleModel.link.like("%odysee.com/%"),
+                    ~ArticleModel.link.like("%/videos/%"),
+                    ~ArticleModel.link.like("%/video/%"),
+                ),
+            )
+        ).scalar() or 0
+
+
+def set_feed_full_text_blocked(feed_id: int, blocked: bool | None) -> None:
+    """Record whether a source can serve article text.
+
+    ``blocked=False`` clears the mark (and NULL means unmeasured).
+    """
+    with SessionLocal() as db:
+        db.execute(
+            update(FeedModel).where(FeedModel.id == feed_id).values(full_text_blocked=blocked)
+        )
+        db.commit()
+
+
+def get_feeds_unable_to_serve_text() -> list[dict]:
+    """Feeds flagged as not serving article text, for the Console to show."""
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(FeedModel.id, FeedModel.name, FeedModel.url).where(
+                FeedModel.full_text_blocked.is_(True)
+            )
+        ).all()
+        return [{"id": r[0], "name": r[1], "url": r[2]} for r in rows]
 
 
 def get_summarize_category_priority() -> list[str]:

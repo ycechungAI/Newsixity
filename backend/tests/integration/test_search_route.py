@@ -57,25 +57,36 @@ class TestSearchRoute:
         assert resp.status_code in (404, 200)  # not 422 — the path still parses as an int
 
 
+@pytest.fixture(scope="module")
+def xylophone_article_id():
+    """Seed one article with a distinctive word so search can find it.
+
+    Module-scoped and defined at module level, not as a class-scoped instance
+    method: pytest 10 removes the latter (it breaks because each test gets a new
+    instance while the fixture runs once per class). ``upsert_article`` is
+    INSERT OR IGNORE, so re-seeding the same guid returns None — hence one
+    module-wide seed rather than one per test.
+    """
+    from app.db.repository import get_all_feeds, upsert_article
+
+    feed = next(f for f in get_all_feeds() if f.url.startswith("http"))
+    return upsert_article(
+        feed.id,
+        {"guid": "shape-test-1", "title": "Xylophone shape test",
+         "link": "https://example.com/xylophone", "published_at": "2026-05-01T00:00:00Z",
+         "content": "A xylophone appears in this body text."},
+        "shape-hash-1",
+    )
+
+
 class TestSearchResultShape:
     """Search returned the repository's snake_case dataclasses inside a plain
     dict, so ArticleCard read feedName/publishedAt/isSaved as undefined —
     no source, no date, never "saved". Same silent-mismatch class as v0.3 §6."""
 
-    @pytest.fixture(scope="class")
-    def article_id(self):
-        # Class-scoped: upsert_article is INSERT OR IGNORE, so a second call
-        # with the same guid returns None.
-        from app.db.repository import get_all_feeds, upsert_article
-
-        feed = next(f for f in get_all_feeds() if f.url.startswith("http"))
-        return upsert_article(
-            feed.id,
-            {"guid": "shape-test-1", "title": "Xylophone shape test",
-             "link": "https://example.com/xylophone", "published_at": "2026-05-01T00:00:00Z",
-             "content": "A xylophone appears in this body text."},
-            "shape-hash-1",
-        )
+    @pytest.fixture
+    def article_id(self, xylophone_article_id):
+        return xylophone_article_id
 
     def test_articles_are_camel_case_with_highlight(self, client, article_id):
         data = client.get("/api/articles/search", params={"q": "xylophone"}).json()

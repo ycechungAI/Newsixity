@@ -315,6 +315,28 @@ and nothing noticed.
 - **Should `sort=relevance` become the default at all?** It is a real
   behaviour change: the feed will stop reading strictly newest-first.
 
+## 9a. Follow-ups noted while building
+
+Separate from the ranking work, collected here so they are not lost.
+
+- **Progress bar for the full-text backfill.** The Console button
+  (`POST /api/console/backfill-full-text`) runs one bounded batch and then stops,
+  so repairing ~632 articles means clicking it ~25 times with no indication of
+  overall progress. Wanted: a progress bar showing repaired / pending, with the
+  remaining count, rather than a toast per batch. A running job with a
+  pollable status endpoint would serve better than one request per batch —
+  this is the same shape as §2.8's "report which limit stopped each feed".
+- **Report articles that can never be repaired.** Paywalled sources
+  (Financial Times, Bloomberg) and video links return nothing extractable, and
+  `ensure_article_text` correctly refuses to overwrite good text with less. They
+  are re-attempted on every run for no gain. They should eventually be marked so
+  the pending count reflects only articles that can actually be fixed.
+- **Sportsnet's empty `<link>` elements.** All 56 entries carry a
+  whitespace-padded CDATA link that feedparser discards, so every insert is
+  silently rejected by the SSRF gate. The URL is recoverable from `<comments>`.
+  Separately, `upsert_article` dropping entries without surfacing the count is
+  the same silent-failure class this spec keeps running into.
+
 ## 10. Sequence
 
 §2 first — the reported bug, groundwork already in the tree. §3 and §4

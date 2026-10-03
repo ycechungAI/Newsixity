@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.db.repository import get_article_by_id, get_unsummarized_articles, update_article_summary
+from app.lib.services.article_text import ensure_article_text
 from app.lib.services.summarization import (
     SessionLimitExceededError,
     process_batch,
@@ -33,8 +34,12 @@ async def summarize_endpoint(body: SummarizeRequestBody) -> dict:
         if article.summary:
             return {"summary": article.summary}
 
-        text_to_summarize = article.content if article.content and len(article.content) > 10 else None
-        if not text_to_summarize:
+        # Same text-acquisition path as the scheduled queue: if the feed only
+        # supplied a teaser, fetch the page. Without this, an article reached
+        # via this button summarized from a paragraph while the same article in
+        # the queue summarized from the full text.
+        text_to_summarize = await ensure_article_text(article)
+        if not text_to_summarize or len(text_to_summarize) <= 10:
             raise HTTPException(
                 status_code=400, detail="Article has no sufficient content to summarize."
             )

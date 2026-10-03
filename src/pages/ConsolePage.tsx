@@ -1,6 +1,15 @@
-import { useState, useEffect, useRef, ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, ReactNode } from "react";
 import { Link } from "react-router";
 import { confirmDialog, notify } from "@/lib/ui/dialog";
+
+/** How often to ask the backend for backfill progress. */
+const POLL_MS = 800;
+/**
+ * Failed polls before the UI admits it has lost contact. Three is ~2.4s,
+ * long enough to ride out one slow response, short enough that a genuinely
+ * dead backend doesn't leave the user staring at a frozen bar.
+ */
+const STALE_POLL_LIMIT = 3;
 
 function isSystemMessage(text: string): boolean {
   // \x1b, not \033: octal escapes are a syntax error under TypeScript's
@@ -114,6 +123,17 @@ export default function ConsolePage() {
   /** Name of the backup awaiting a confirm click, if any. */
   const [pendingRestore, setPendingRestore] = useState<string | null>(null);
   const [resummarizing, setResummarizing] = useState(false);
+  /** Live progress of the full-text backfill job, or null when idle. */
+  const [backfill, setBackfill] = useState<{
+    running: boolean; processed: number; repaired: number; total: number;
+    /** null while the total is unknown — render an indeterminate bar. */
+    percent: number | null; currentFeed: string | null; cancelled: boolean;
+  } | null>(null);
+  const [fullTextPending, setFullTextPending] = useState<number | null>(null);
+  const [concurrency, setConcurrency] = useState(0);
+  const [maxConcurrency, setMaxConcurrency] = useState(8);
+  /** Sources measured as refusing to serve article text; excluded from pending. */
+  const [blockedFeeds, setBlockedFeeds] = useState<{ id: number; name: string }[]>([]);
   const [pruning, setPruning]       = useState(false);
   const [prunePreview, setPrunePreview] = useState<PrunePreview | null>(null);
   const [pruneLoading, setPruneLoading] = useState(false);
@@ -162,6 +182,127 @@ export default function ConsolePage() {
         setQueueCount(c => Math.max(0, c - 1));
       }
     } catch { void notify("Failed to remove from queue."); }
+  }
+
+  const loadFullTextStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/console/full-text-status");
+      if (res.ok) {
+        const d = await res.json();
+        setFullTextPending(d.pending ?? 0);
+        setBlockedFeeds(d.blockedFeeds ?? []);
+      }
+    } catch { /* leave the count unknown rather than showing a wrong number */ }
+
+    try {
+      const res = await fetch("/api/console/backfill-full-text/status");
+      if (res.ok) {
+        const d = await res.json();
+        setMaxConcurrency(d.maxConcurrency ?? 8);
+        // Adopt the detected default once, but let the user override after.
+        if (concurrency === 0 && d.suggestedConcurrency) setConcurrency(d.suggestedConcurrency);
+        setBackfill(d.running || d.processed > 0 ? d : null);
+      }
+    } catch { /* progress is best-effort */ }
+  }, [concurrency]);
+
+  // Full-text backfill status changes rarely too, and each run is expensive
+  // (one outbound page fetch per article), so keep it out of the 500ms poll.
+  useEffect(() => { loadFullTextStatus(); }, [loadFullTextStatus]);
+
+  // Poll only while a run is in flight; the 500ms console poll is too coarse
+  // for a progress bar and wasteful when idle.
+  //
+  // Deliberately does NOT depend on `backfill`. An earlier version did, and
+  // that broke it: the effect set `backfill`, which changed the dependency,
+  // which tore the interval down and built a new one — resetting the timer
+  // before it could ever fire. The bar sat frozen while the job ran happily.
+  // Reading `running` from a ref keeps the interval stable.
+  const backfillRunningRef = useRef(false);
+  /** Consecutive failed polls. The job may still be fine; the UI may not be. */
+  const [staleAfter, setStaleAfter] = useState(0);
+  useEffect(() => { backfillRunningRef.current = !!backfill?.running; }, [backfill?.running]);
+
+  useEffect(() => {
+    let misses = 0;
+    const t = setInterval(async () => {
+      if (!backfillRunningRef.current) {
+        misses = 0;
+        setStaleAfter(0);
+        return;
+      }
+      try {
+        const res = await fetch("/api/console/backfill-full-text/status");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        setBackfill(d);
+        misses = 0;
+        setStaleAfter(0);
+        if (!d.running) {
+          backfillRunningRef.current = false;
+          void notify(
+            `Full-text backfill done: ${d.repaired} of ${d.processed} articles got full text` +
+            (d.cancelled ? " (cancelled)" : "")
+          );
+          await loadFullTextStatus();
+        }
+      } catch {
+        // Say so. A silent catch here is why a frozen progress bar once looked
+        // like a working one — the user had no way to tell a dead backend from
+        // a stalled UI, and would sit waiting on a job that had finished.
+        misses += 1;
+        if (misses >= STALE_POLL_LIMIT) setStaleAfter(misses * POLL_MS);
+      }
+    }, POLL_MS);
+    return () => clearInterval(t);
+  }, [loadFullTextStatus]);
+
+  /** Start the continuous job. It repairs everything outstanding, not one batch. */
+  async function handleBackfillFullText() {
+    if (backfill?.running) return;
+    if (fullTextPending === 0) return;
+    if (!await confirmDialog(
+      "Fetch each article's real text from its source?\n\n" +
+      "Most publishers block or paywall this, so many articles will keep their " +
+      "feed excerpt. The full-text view on the article page works either way. " +
+      "This runs in the background and can be cancelled."
+    )) return;
+
+    try {
+      const res = await fetch(`/api/console/backfill-full-text?concurrency=${concurrency || 0}`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.success === false) {
+        void notify(`Could not start backfill: ${d.message ?? res.status}`);
+        return;
+      }
+      setBackfill(d);
+    } catch {
+      void notify("Failed to start the full-text backfill.");
+    }
+  }
+
+  /** Clear every "can't serve text" mark so those feeds are tried again. */
+  async function handleUnblockFeeds() {
+    if (!await confirmDialog(
+      `Try ${blockedFeeds.length} blocked source${blockedFeeds.length === 1 ? "" : "s"} again?\n\n` +
+      "They'll be included in the pending count once more."
+    )) return;
+    for (const f of blockedFeeds) {
+      await fetch(`/api/console/full-text-unblock?feed_id=${f.id}`, { method: "POST" }).catch(() => {});
+    }
+    await loadFullTextStatus();
+    void notify("Unblocked. Those sources will be tried on the next run.");
+  }
+
+  /** Ask the run to stop. It ends after the batch in flight. */
+  async function handleCancelBackfill() {
+    try {
+      const res = await fetch("/api/console/backfill-full-text/cancel", { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success) void notify("Stopping after the current batch…");
+    } catch {
+      void notify("Failed to send the cancel request.");
+    }
   }
 
   async function handleResummarize() {
@@ -352,6 +493,24 @@ export default function ConsolePage() {
         <span className="console-bar-title">⬛ Console</span>
         <span style={{ flex: 1 }} />
         <button className="con-btn con-btn-green" onClick={loadData}>↺ Refresh</button>
+        {backfill?.running ? (
+          <button className="con-btn con-btn-red" onClick={handleCancelBackfill}>
+            Cancel backfill
+          </button>
+        ) : (
+          <button
+            className="con-btn con-btn-green"
+            onClick={handleBackfillFullText}
+            disabled={fullTextPending === 0}
+            title={
+              fullTextPending === 0
+                ? "Every article already has full text"
+                : "Fetch each article's real text from its source, so it survives the link going stale"
+            }
+          >
+            {fullTextPending === 0 ? "Full-text backfill ✓" : "Full-text backfill"}
+          </button>
+        )}
         <button className="con-btn con-btn-green" onClick={handleResummarize} disabled={resummarizing}>
           {resummarizing ? "Resummarizing…" : "Resummarize"}
         </button>
@@ -364,6 +523,103 @@ export default function ConsolePage() {
       </div>
 
       <div className="console-body">
+        {/* Full-text backfill: progress, concurrency, results */}
+        {(backfill || (fullTextPending ?? 0) > 0) && (
+          <div className="con-section">
+            <div className="con-section-head">
+              <div>
+                <div className="con-section-title">Full-text backfill</div>
+                <div className="con-section-sub">
+                  {backfill?.running
+                    ? `Fetching article text — ${backfill.processed} done`
+                    : backfill
+                      ? `${backfill.repaired} repaired of ${backfill.processed} fetched`
+                      : "Fetch each article's real text from its source"}
+                </div>
+              </div>
+            </div>
+
+            {backfill && (
+              <>
+                {staleAfter > 0 && (
+                  <div className="con-progress-warn" role="alert">
+                    No response from the backend for{" "}
+                    {Math.round(staleAfter / 1000)}s. The job may still be
+                    running — these figures may be out of date. Check the Console
+                    log, or reload.
+                  </div>
+                )}
+                {/*
+                  No percentage. The total counts every article holding a feed
+                  excerpt, but most cannot be scraped at all — paywalled or
+                  bot-blocked — so "590 → 100%" promised something the run
+                  cannot deliver. It repaired 3 in a full pass. An indeterminate
+                  bar with two measured numbers underneath is honest; a
+                  confident-looking bar was not.
+                */}
+                <div
+                  className={`con-progress${backfill.running ? " is-indeterminate" : " is-done"}`}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="con-progress-fill"
+                    style={{
+                      width: backfill.running ? undefined : `${Math.min(100, backfill.percent ?? 0)}%`,
+                    }}
+                  />
+                </div>
+                <div className="con-progress-meta">
+                  <span>{backfill.processed} fetched</span>
+                  <span>{backfill.repaired} got full text</span>
+                  {backfill.currentFeed && <span>{backfill.currentFeed}</span>}
+                </div>
+                {!backfill.running && backfill.processed > 0 && backfill.repaired < backfill.processed * 0.1 && (
+                  <div className="con-progress-note">
+                    Most sources block or paywall automated fetching, so most
+                    articles keep their feed excerpt. That&apos;s the publisher&apos;s
+                    choice, not a failure here.
+                  </div>
+                )}
+              </>
+            )}
+
+            {blockedFeeds.length > 0 && (
+              <div className="con-blocked">
+                <span>
+                  {blockedFeeds.length} source{blockedFeeds.length === 1 ? "" : "s"} won&apos;t
+                  serve article text (paywalled or bot-blocked), so they&apos;re
+                  excluded from the count: {blockedFeeds.map(f => f.name).join(", ")}
+                </span>
+                <button
+                  className="con-btn con-btn-blue"
+                  onClick={handleUnblockFeeds}
+                  title="Clear these marks and include them again"
+                >
+                  Unblock all
+                </button>
+              </div>
+            )}
+
+            {!backfill?.running && (
+              <label className="con-slider">
+                <span>
+                  Fetch {concurrency || 1} at a time
+                  <em>more cores fetch faster; fewer is gentler on publishers</em>
+                </span>
+                <input
+                  type="range"
+                  min={1}
+                  max={maxConcurrency}
+                  value={concurrency || 1}
+                  onChange={(e) => setConcurrency(Number(e.target.value))}
+                />
+              </label>
+            )}
+          </div>
+        )}
+
         {/* Summarization Queue */}
         <div className="con-section">
           <div className="con-section-head">

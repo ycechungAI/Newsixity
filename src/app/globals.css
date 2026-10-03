@@ -710,6 +710,47 @@ body,
   background: var(--bg);
 }
 
+/* Collapsible full text on the article page */
+.article-fulltext {
+  margin: 12px 0 4px;
+}
+.article-fulltext-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.article-fulltext-toggle:hover {
+  background: var(--surface);
+}
+.article-fulltext-meta {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 8px;
+}
+.article-fulltext-caret {
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.article-fulltext-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-left: 2px solid var(--border);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
 /* Basic prose styles for article content */
 .prose {
   font-size: 13px;
@@ -1723,6 +1764,102 @@ body,
   font-size: 11px;
   font-weight: 600;
   color: #4ade80;
+}
+
+/* Full-text backfill progress */
+.con-progress {
+  height: 8px;
+  margin: 10px 8px 4px;
+  background: #0c0c0c;
+  border: 1px solid #1a3a1a;
+  overflow: hidden;
+}
+.con-progress-fill {
+  height: 100%;
+  background: #22c55e;
+  transition: width 0.25s ease;
+}
+.con-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 8px;
+  font-size: 10px;
+  color: #166534;
+}
+/* Running: sweep rather than claim a percentage. Most articles can't be
+   scraped at all, so a confident x/590 bar would promise what the run can't
+   deliver. Only the two measured counts underneath are shown. */
+.con-progress.is-indeterminate .con-progress-fill {
+  width: 35%;
+  animation: con-progress-sweep 1.2s ease-in-out infinite;
+}
+.con-progress.is-done .con-progress-fill {
+  background: #166534;
+}
+@keyframes con-progress-sweep {
+  0%   { margin-left: 0; }
+  50%  { margin-left: 65%; }
+  100% { margin-left: 0; }
+}
+.con-progress-note {
+  padding: 0 8px 8px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #166534;
+}
+.con-blocked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  background: #0c0c0c;
+  border: 1px solid #1a3a1a;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #166534;
+}
+.con-blocked .con-btn {
+  flex-shrink: 0;
+}
+/* The UI has lost contact with the backend; the numbers below are stale. */
+.con-progress-warn {
+  margin: 8px 8px 0;
+  padding: 6px 8px;
+  background: #1a1408;
+  border: 1px solid #78350f;
+  color: #facc15;
+  font-size: 10px;
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .con-progress.is-indeterminate .con-progress-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+.con-slider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  font-size: 11px;
+  color: #4ade80;
+}
+.con-slider em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  color: #166534;
+}
+.con-slider input[type="range"] {
+  flex-shrink: 0;
+  width: 140px;
+  accent-color: #22c55e;
 }
 .con-section-sub {
   font-size: 10px;

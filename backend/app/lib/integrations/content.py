@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.lib.utils.sanitize import MAX_CONTENT_LENGTH
 from app.lib.utils.url import parse_http_url
 
 FETCH_TIMEOUT = 10.0
@@ -132,7 +133,7 @@ def extract_article_text_fallback(html: str) -> Optional[str]:
         if match:
             text = strip_html_tags(match.group(1))
             if len(text) > 100:
-                return text[:8000]
+                return text[:MAX_CONTENT_LENGTH]
 
     # Fallback: collect <p> tags
     paragraphs = []
@@ -144,7 +145,7 @@ def extract_article_text_fallback(html: str) -> Optional[str]:
     if paragraphs:
         combined = "\n\n".join(paragraphs)
         if len(combined) > 100:
-            return combined[:8000]
+            return combined[:MAX_CONTENT_LENGTH]
 
     return None
 
@@ -184,7 +185,7 @@ async def fetch_article_content(url: str) -> Optional[str]:
 
                 extracted = trafilatura.extract(html, include_comments=False)
                 if extracted and len(extracted) > 100:
-                    return extracted[:8000]
+                    return extracted[:MAX_CONTENT_LENGTH]
             except ImportError:
                 pass
 

@@ -9,6 +9,19 @@ import re
 _TAG_RE = re.compile(r"<[^>]*>")
 _WS_RE = re.compile(r"\s+")
 
+# Storage limits for untrusted feed/page text, applied after HTML stripping.
+#
+# These live here rather than as inline `[:8000]` slices at each call site: the
+# limit was 8000 in four separate places, and raising it meant finding all four.
+# Keep them here so the next change is one edit.
+#
+# MAX_CONTENT_LENGTH was raised from 8000 to 20000 so a long article keeps its
+# body. Article text is the fallback when a link goes stale, and at 8000 a
+# typical feature was cut mid-sentence — which defeats the point of keeping it.
+MAX_TITLE_LENGTH = 500
+MAX_AUTHOR_LENGTH = 200
+MAX_CONTENT_LENGTH = 20_000
+
 
 def strip_html(html: str) -> str:
     text = _TAG_RE.sub("", html)

@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/utils/date";
 import { isVideoUrl, extractVideoInfo, fetchYouTubePlaylist, type PlaylistItem } from "@/lib/utils/video";
 import { parseHttpUrl } from "@/lib/utils/url";
 import ArticleSummary from "@/components/articles/ArticleSummary";
+import ArticleFullText from "@/components/articles/ArticleFullText";
 import VideoEmbed from "@/components/articles/VideoEmbed";
 import WebPageEmbed from "@/components/articles/WebPageEmbed";
 
@@ -126,18 +127,7 @@ export default function ArticlePage() {
 
         <ArticleSummary articleId={article.id} initialSummary={article.summary} />
 
-        {article.content && <div className="prose">{article.content}</div>}
-
-        {safeArticleLink && (
-          <a
-            href={safeArticleLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="article-open-btn"
-          >
-            ↗ Read Original Article
-          </a>
-        )}
+        <ArticleFullText content={article.content} link={safeArticleLink} />
       </article>
     </div>
   );

@@ -24,11 +24,9 @@ from app.db.repository import (
     get_unsummarized_by_category,
     get_unsummarized_saved_articles,
     mark_stuck_unsummarized_timed_out,
-    update_article_content,
     update_article_summary,
 )
 from app.db.repository.helpers import Article
-from app.lib.integrations.content import fetch_article_content
 from app.lib.integrations.ollama import (
     OllamaUnavailableError,
     is_ollama_available,
@@ -37,6 +35,14 @@ from app.lib.integrations.ollama import (
 from app.lib.services.summarization import get_default_model
 
 logger = logging.getLogger("newsixity")
+
+# The teaser threshold and the fetch itself live in
+# app.lib.services.article_text, shared with the on-demand /api/summarize route
+# so both decide the same way. Re-exported for callers that imported it here.
+from app.lib.services.article_text import (  # noqa: E402
+    TEASER_MAX_LENGTH,
+    ensure_article_text,
+)
 
 # ANSI color codes for terminal output
 COLORS = {
@@ -124,17 +130,10 @@ async def summarize_one(article: Article) -> bool:
         )
         return False
 
-    # If no content from RSS, try fetching from the original URL.
-    if (not content or len(content) <= 10) and article.link:
-        logger.info(
-            "[Newsixity] No RSS content for article %s, fetching from %s",
-            article.id,
-            article.link,
-        )
-        fetched = await fetch_article_content(article.link)
-        if fetched and len(fetched) > 50:
-            content = fetched
-            update_article_content(article.id, fetched)
+    # Fetch the original page when the feed gave us a teaser rather than the
+    # article body. See app.lib.services.article_text for why this lives in a
+    # shared helper rather than inline.
+    content = await ensure_article_text(article) or content
 
     # Still no content after trying — mark skipped to remove from the queue.
     if not content or len(content) <= 10:

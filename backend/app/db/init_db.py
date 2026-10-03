@@ -294,6 +294,9 @@ def init_db() -> None:
         # SELECT that names them with "no such column".
         _add_column_if_missing(session, "weather_locations", "is_active",
                                "INTEGER NOT NULL DEFAULT 0")
+        # NULL (unmeasured) rather than 0, so "not yet checked" is distinct
+        # from "checked and works".
+        _add_column_if_missing(session, "feeds", "full_text_blocked", "INTEGER")
         session.commit()
 
     with SessionLocal() as session:
