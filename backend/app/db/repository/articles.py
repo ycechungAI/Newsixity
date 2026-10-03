@@ -917,11 +917,17 @@ def get_articles_needing_full_text(
         ]
 
 
-def count_articles_needing_full_text(max_length: int = 1500) -> int:
+def count_articles_needing_full_text(max_length: int) -> int:
     """How many articles would :func:`get_articles_needing_full_text` offer.
 
     Same predicate, one aggregate, so the backfill can size a progress bar
     without loading rows it may never fetch.
+
+    ``max_length`` is required rather than defaulted: the number is only
+    meaningful if it is the same threshold the selecting query uses, and a
+    default here is a second place for the two to disagree — the denominator
+    would then count rows the run is never offered, and `processed` could
+    legitimately exceed `total`.
     """
     with SessionLocal() as db:
         return db.execute(

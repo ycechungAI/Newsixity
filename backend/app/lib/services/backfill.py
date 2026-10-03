@@ -64,6 +64,20 @@ DEFAULT_CONCURRENCY = default_concurrency()
 # against the fetch time it sits in front of.
 DEFAULT_DELAY_SECONDS = 0.05
 
+# How many consecutive batches may repair nothing before the run gives up.
+#
+# The pending set is defined by *stored length*, so an article only leaves it
+# when its text actually grows. Rows whose pages serve text that is already
+# correct come back `served=True` with no gain — a success, not a miss — so
+# their feed is never flagged as blocked and the rows are re-offered forever.
+# The loop previously exited only on an *empty* batch, which those rows never
+# produce: one full pass reported 900 processed against ~630 articles that
+# existed, because `processed` counts fetch attempts, not distinct articles.
+#
+# Two consecutive idle batches, not one, so a single batch of network
+# timeouts doesn't end a run that had just been making progress.
+MAX_IDLE_BATCHES = 2
+
 # How many articles a feed must fail to serve text for before it's flagged as
 # unable to. High enough that a few dead links in an otherwise good feed don't
 # condemn it; low enough that a blocked source is identified in one pass.
@@ -82,6 +96,11 @@ class BackfillJob:
         self.current_feed: str | None = None
         self.running = False
         self.cancelled = False
+        # Why the run ended early, when it did. None means it ran until the
+        # pending set was exhausted, which is not the same thing as "nothing
+        # was left to do" once an idle-batch stop is possible.
+        self.stopped_reason: str | None = None
+        self._idle_batches = 0
         self.finished_at: float | None = None
         self.started_at: float | None = None
         self.error: str | None = None
@@ -111,6 +130,7 @@ class BackfillJob:
             if self.started_at and self.running
             else None,
             "error": self.error,
+            "stoppedReason": self.stopped_reason,
         }
 
     def cancel(self) -> None:
@@ -167,6 +187,8 @@ class BackfillJob:
         self.error = None
         self.processed = self.repaired = self.skipped = 0
         self.total = 0
+        self._idle_batches = 0
+        self.stopped_reason = None
         self.started_at = time.monotonic()
         self.finished_at = None
 
@@ -175,7 +197,9 @@ class BackfillJob:
             # clicks Start rather than cached from page load. This is a single
             # aggregate — it does not materialize the rows, which is what the
             # earlier version did and what made it feel like duplicated effort.
-            self.total = await asyncio.to_thread(count_articles_needing_full_text)
+            self.total = await asyncio.to_thread(
+                count_articles_needing_full_text, TEASER_MAX_LENGTH
+            )
             logger.info(
                 "Full-text backfill starting: %d articles, concurrency %d",
                 self.total,
@@ -205,10 +229,12 @@ class BackfillJob:
 
                 results = await asyncio.gather(*[guarded(a) for a in articles])
 
+                repaired_this_batch = 0
                 for feed_id, feed, gained, served in results:
                     self.processed += 1
                     if gained:
                         self.repaired += 1
+                        repaired_this_batch += 1
                         if feed_id in self._per_feed:
                             self._per_feed[feed_id][0] += 1
                     elif not served:
@@ -222,6 +248,12 @@ class BackfillJob:
 
                 self._reclassify_feeds()
 
+                # An idle batch means the next batch will be the same rows:
+                # nothing grew, so nothing left the pending set. Counting
+                # consecutive idles and stopping is what keeps `processed` a
+                # count of articles rather than of HTTP requests.
+                self._idle_batches = 0 if repaired_this_batch else self._idle_batches + 1
+
                 logger.info(
                     "Full-text backfill: %d/%d processed, %d repaired",
                     self.processed,
@@ -231,6 +263,17 @@ class BackfillJob:
 
                 if self.cancelled:
                     break
+
+                if self._idle_batches >= MAX_IDLE_BATCHES:
+                    self.stopped_reason = (
+                        f"Stopped after {MAX_IDLE_BATCHES} batches with nothing "
+                        f"repaired: {self.processed} articles checked, "
+                        f"{self.repaired} repaired. The rest serve text that is "
+                        f"already as good as it gets, or are unreachable."
+                    )
+                    logger.info("Full-text backfill: %s", self.stopped_reason)
+                    break
+
                 await asyncio.sleep(DEFAULT_DELAY_SECONDS)
 
         except Exception as exc:  # noqa: BLE001 — report, don't kill the server

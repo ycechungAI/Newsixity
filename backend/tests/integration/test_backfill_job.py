@@ -217,6 +217,116 @@ class TestGainRule:
         assert at.scrape_is_better(_s(500), None)
 
 
+def _run_bounded(job, timeout: float):
+    """Run a job with a hard deadline, so a runaway loop fails the test loudly."""
+    async def _go():
+        return await asyncio.wait_for(job.run(), timeout=timeout)
+
+    try:
+        return asyncio.run(_go())
+    except asyncio.TimeoutError as exc:
+        pytest.fail(
+            f"the backfill was still running after {timeout}s "
+            f"({job.processed} attempts): it is re-fetching rows that never "
+            f"leave the pending set instead of stopping"
+        )
+        raise AssertionError from exc
+
+
+class TestNoProgressStopsTheRun:
+    """The run must stop when a batch repairs nothing.
+
+    `get_articles_needing_full_text` selects by *stored length*, so an article
+    stays in the pending set unless its stored text actually grows. A publisher
+    whose pages serve text that is already correct (`served=True`, no gain) is
+    never flagged as blocked — a success is not a miss — so those rows are
+    re-offered on every single batch, forever.
+
+    The symptom is a backfill that "fetches" far more articles than exist:
+    `processed` counts fetch *attempts*, not distinct articles. Measured on
+    this install: a pass reported 900 processed while only ~630 articles were
+    ever pending.
+
+    articles.py already documents the intended rule — "it stops when a batch
+    comes back with no progress" — and the loop implemented something weaker,
+    exiting only on an *empty* batch, which those rows never produce.
+    """
+
+    def _article(self, i):
+        return type("A", (), {
+            "id": i, "feed_id": 7, "feed_name": "Working publisher",
+            "content": "short but correct", "link": f"https://x.test/{i}",
+        })()
+
+    def test_run_stops_instead_of_refetching_the_same_rows_forever(self, monkeypatch):
+        articles = [self._article(i) for i in range(25)]
+        batches = {"n": 0}
+
+        def fake_get(_threshold, limit):
+            batches["n"] += 1
+            # Always hand back the same pending rows — what the real query does
+            # when nothing grew. No artificial cap: the point is that the job,
+            # not the fixture, has to end the run.
+            return articles[:limit]
+
+        monkeypatch.setattr(
+            "app.lib.services.backfill.get_articles_needing_full_text", fake_get
+        )
+        monkeypatch.setattr(
+            "app.lib.services.backfill.count_articles_needing_full_text",
+            lambda *a, **k: len(articles),
+        )
+        # The fetch "succeeds" and returns exactly what is already stored.
+        monkeypatch.setattr(
+            "app.lib.services.backfill.acquire_full_text",
+            lambda a: asyncio.sleep(
+                0, result=type("R", (), {"text": "short but correct", "served": True})()
+            ),
+        )
+
+        job = BackfillJob(concurrency=2)
+        # Bounded on purpose. Without a no-progress stop this never returns —
+        # the rows are re-offered forever — and a hanging test reports far less
+        # clearly than a timeout naming the cause.
+        snap = _run_bounded(job, 5.0)
+
+        assert snap["repaired"] == 0
+        assert batches["n"] <= 3, (
+            f"the run kept re-offering the same {len(articles)} articles "
+            f"{batches['n']} times instead of stopping"
+        )
+        assert snap["processed"] <= len(articles) * 2, (
+            f"processed {snap['processed']} fetch attempts for only "
+            f"{len(articles)} articles — attempts are being counted as articles"
+        )
+
+    def test_the_run_says_why_it_stopped(self, monkeypatch):
+        """A run that ends early must not look like a finished one.
+
+        Otherwise "0 repaired" is indistinguishable from "there was nothing to
+        do", which is the same silent-failure class this repo keeps hitting.
+        """
+        articles = [self._article(i) for i in range(5)]
+
+        monkeypatch.setattr(
+            "app.lib.services.backfill.get_articles_needing_full_text",
+            lambda _t, limit: articles[:limit],
+        )
+        monkeypatch.setattr(
+            "app.lib.services.backfill.count_articles_needing_full_text",
+            lambda *a, **k: len(articles),
+        )
+        monkeypatch.setattr(
+            "app.lib.services.backfill.acquire_full_text",
+            lambda a: asyncio.sleep(0, result=type("R", (), {"text": "short but correct", "served": True})()),
+        )
+
+        snap = _run_bounded(BackfillJob(concurrency=2), 5.0)
+
+        assert snap["stoppedReason"], "an early stop reported no reason"
+        assert "repair" in snap["stoppedReason"].lower()
+
+
 class TestBackfillJob:
     def test_progress_is_monotonic_and_ends_complete(self, monkeypatch):
         class FakeArticle:

@@ -128,6 +128,10 @@ export default function ConsolePage() {
     running: boolean; processed: number; repaired: number; total: number;
     /** null while the total is unknown — render an indeterminate bar. */
     percent: number | null; currentFeed: string | null; cancelled: boolean;
+    /** Set when the run ended early. Without it an early stop is
+     *  indistinguishable from a finished one, and "0 repaired" reads as
+     *  "nothing to do" rather than "stopped, nothing more was repairable". */
+    stoppedReason?: string | null;
   } | null>(null);
   const [fullTextPending, setFullTextPending] = useState<number | null>(null);
   const [concurrency, setConcurrency] = useState(0);
@@ -241,7 +245,9 @@ export default function ConsolePage() {
         if (!d.running) {
           backfillRunningRef.current = false;
           void notify(
-            `Full-text backfill done: ${d.repaired} of ${d.processed} articles got full text` +
+            (d.stoppedReason
+              ? `Full-text backfill stopped: ${d.repaired} of ${d.processed} articles got full text`
+              : `Full-text backfill done: ${d.repaired} of ${d.processed} articles got full text`) +
             (d.cancelled ? " (cancelled)" : "")
           );
           await loadFullTextStatus();
@@ -533,7 +539,7 @@ export default function ConsolePage() {
                   {backfill?.running
                     ? `Fetching article text — ${backfill.processed} done`
                     : backfill
-                      ? `${backfill.repaired} repaired of ${backfill.processed} fetched`
+                      ? `${backfill.repaired} repaired of ${backfill.processed} checked`
                       : "Fetch each article's real text from its source"}
                 </div>
               </div>
@@ -571,10 +577,13 @@ export default function ConsolePage() {
                   />
                 </div>
                 <div className="con-progress-meta">
-                  <span>{backfill.processed} fetched</span>
+                  <span>{backfill.processed} checked</span>
                   <span>{backfill.repaired} got full text</span>
                   {backfill.currentFeed && <span>{backfill.currentFeed}</span>}
                 </div>
+                {!backfill.running && backfill.stoppedReason && (
+                  <div className="con-progress-note">{backfill.stoppedReason}</div>
+                )}
                 {!backfill.running && backfill.processed > 0 && backfill.repaired < backfill.processed * 0.1 && (
                   <div className="con-progress-note">
                     Most sources block or paywall automated fetching, so most
