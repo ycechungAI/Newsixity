@@ -52,6 +52,15 @@ if ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
+# Node 24+ only (package.json "engines", .nvmrc). 20 and 22 are retired; fail
+# here with a clear message instead of deep inside `npm ci` / vite.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "$NODE_MAJOR" -lt 24 ]; then
+    echo "ERROR: Node.js 24 or newer is required (found: $(node -v 2>/dev/null || echo none))." >&2
+    echo "  nvm install && nvm use      # reads .nvmrc" >&2
+    exit 1
+fi
+
 # --- Self-healing first-time setup --------------------------------------
 # A fresh checkout (or a new Mac) is missing things the build needs. Set
 # them up here automatically instead of failing with cryptic errors.

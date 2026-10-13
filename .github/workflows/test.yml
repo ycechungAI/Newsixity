@@ -48,7 +48,7 @@ jobs:
       # status 200 is exactly what shipped four broken features.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Build frontend (needed by the static-route tests)
@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
 
       - run: npm ci
@@ -85,6 +85,31 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  frontend-node-next:
+    # Forward-compat canary: the same checks on the next Node major, so a
+    # breaking change shows up here before 26 becomes the supported base.
+    # Advisory only (continue-on-error) — it never gates a merge. When 26
+    # goes LTS, move it to .nvmrc and put 28 here.
+    name: Frontend on Node 26 (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      # engines is ">=24", so 26 passes engine-strict without an override.
+      - run: npm ci
+
+      - run: npx eslint --max-warnings=0
+
+      - run: npx tsc --noEmit
+
+      - run: npm run build
 
   api-contract:
     name: API contract (frontend calls vs backend routes)

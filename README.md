@@ -29,7 +29,7 @@ your own machine. Packaged as a native desktop app via Tauri.
 
 ### Prerequisites
 
-- **Node.js 20+** — [nodejs.org](https://nodejs.org)
+- **Node.js 24+** (`.nvmrc` pins 24; 20 and 22 are no longer supported) — [nodejs.org](https://nodejs.org)
 - **Python 3.11+**
 - **Ollama** — [ollama.ai](https://ollama.ai) (required for AI features)
 

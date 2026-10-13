@@ -119,9 +119,9 @@ jobs:
         with:
           toolchain: stable
           target: i686-pc-windows-msvc
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version-file: .nvmrc
       - run: npm install
       - run: npm run build
       - run: cd src-tauri && cargo build --release --target i686-pc-windows-msvc

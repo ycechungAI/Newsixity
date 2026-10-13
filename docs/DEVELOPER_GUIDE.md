@@ -3,7 +3,7 @@
 ## 1. Setup Instructions
 
 ### Prerequisites
-- Node.js 20+ and npm
+- Node.js 24+ and npm (`.nvmrc` pins 24; 20 and 22 are no longer supported)
 - Python 3.11+
 - Ollama (required for summarization and deep research features)
 
