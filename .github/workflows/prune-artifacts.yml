@@ -1,0 +1,46 @@
+name: Prune Artifacts
+
+# Build artifacts are 110-280 MB each and every push to hybrid uploads them.
+# Left alone they fill the repo's artifact quota, and then every build fails
+# at its upload step. Keep the newest 2 generations of each artifact and
+# delete the rest.
+on:
+  # Right after any build finishes — success or failure, so a build that
+  # failed on a full quota still triggers the cleanup that unblocks the next.
+  workflow_run:
+    workflows: ["macOS Build", "Windows Build", "Desktop Build"]
+    types: [completed]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Generations to keep per artifact name"
+        default: "2"
+      dry_run:
+        description: "List what would be deleted without deleting"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+# One prune at a time: two overlapping runs would race to delete the same ids.
+concurrency:
+  group: prune-artifacts
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune old artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete artifacts older than the newest generations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ inputs.keep || '2' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: .github/scripts/prune-artifacts.sh
