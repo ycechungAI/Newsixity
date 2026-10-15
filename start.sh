@@ -189,6 +189,14 @@ if ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
+# Node 24+ only (package.json "engines", .nvmrc); 20 and 22 are retired.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "$NODE_MAJOR" -lt 24 ]; then
+    echo "   ❌ Node.js 24 or newer is required (found: $(node -v 2>/dev/null || echo none))." >&2
+    echo "   nvm install && nvm use      # reads .nvmrc" >&2
+    exit 1
+fi
+
 # Frontend dependencies
 if [ ! -d "node_modules" ] || [ -f "package-lock.json" -a ! -f ".node-modules-installed" ]; then
     echo "   npm: installing..."
