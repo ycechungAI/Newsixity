@@ -19,7 +19,7 @@ that keeps a fresh install scoring exactly as v0.4 did.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,6 +43,17 @@ from app.lib.ranking.promoter import score_and_promote_all
 from app.lib.ranking.scorer import score_article
 from app.main import app
 
+
+
+def _hours_ago(hours: int) -> str:
+    """An ISO timestamp ``hours`` before now.
+
+    The ranking window is relative (``published_at >= now - 1 day``), so a
+    test that needs an article to count as "recent" must be relative too. A
+    literal date stops being recent the day after it was written: these tests
+    passed on 2026-10-03 and failed every run after, with no code change.
+    """
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 @pytest.fixture
 def client():
@@ -279,7 +290,7 @@ class TestPromotionWindow:
         recent = upsert_article(
             feed.id,
             {"guid": "w-recent", "title": "Reg recent inside window", "link": "https://reg.example/r",
-             "published_at": "2026-10-02T00:00:00Z", "content": None},
+             "published_at": _hours_ago(2), "content": None},
             "w-recent-hash",
         )
         old = upsert_article(
@@ -314,13 +325,13 @@ class TestPromotionWindow:
         scored = upsert_article(
             feed.id,
             {"guid": "n-scored", "title": "Reg null scored story", "link": "https://reg.example/s",
-             "published_at": "2026-10-02T00:00:00Z", "content": None},
+             "published_at": _hours_ago(2), "content": None},
             "n-scored-hash",
         )
         unscored = upsert_article(
             feed.id,
             {"guid": "n-unscored", "title": "Reg null unscored story", "link": "https://reg.example/u",
-             "published_at": "2026-10-02T00:00:00Z", "content": None},
+             "published_at": _hours_ago(2), "content": None},
             "n-unscored-hash",
         )
         update_article_scores([{"id": scored, "score": 42.0}])
@@ -433,7 +444,7 @@ class TestDefaultsReproduceV04:
         article_id = upsert_article(
             feed.id,
             {"guid": "d-1", "title": "Announce launch of a record surge", "link": "https://reg.example/d",
-             "published_at": "2026-10-02T00:00:00Z", "content": None},
+             "published_at": "2026-01-01T00:00:00Z", "content": None},
             "d-1-hash",
         )
         score_articles_for_category("finance", [article_id])
